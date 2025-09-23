@@ -3,10 +3,10 @@ from trackers import Tracker
 
 def main():
     # Read video 
-    video_frames = read_video('input_videos\match1_clip_104.mp4')
+    video_frames = read_video('input_videos/cut30s.mp4')
 
     # Initialize Tracker
-    tracker = Tracker('models\last_v5lu_ep30_cl.pt')
+    tracker = Tracker('models/best_ylv8_ep50.pt', use_boost=True)
 
     tracks = tracker.get_object_tracks(video_frames,
                                        read_from_stub=False,
@@ -17,7 +17,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks)
 
     # Save video
-    save_video(output_video_frames, 'output_videos/match1_clip_104_v5l_v2.avi')
+    save_video(output_video_frames, 'output_videos/cut30s_ylv8_bs2.avi')
 
 if __name__ == '__main__':
     main()
