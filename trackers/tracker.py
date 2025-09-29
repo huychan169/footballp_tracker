@@ -22,10 +22,10 @@ class Tracker:
 
         if self.use_boost:
             args = SimpleNamespace(
-                track_high_thresh=0.5, # giảm 
+                track_high_thresh=0.55, # giảm 
                 track_low_thresh=0.3, # increase in b5
                 new_track_thresh=0.8, # tăng
-                track_buffer=300, # tăng
+                track_buffer=300, # -> giảm ID switch = tăng track_buffer + giảm match_thresh 
                 match_thresh=0.7,
                 proximity_thresh=0.5, # khi có reID
                 appearance_thresh=0.25, # reID
@@ -36,7 +36,7 @@ class Tracker:
                 cmc_method="orb",
                 name="exp",
                 ablation=False,
-                mot20=False   # True nếu có nhiều đối tượng chen lấn
+                mot20=True   # True nếu có nhiều đối tượng chen lấn
             )
             self.tracker = BoTSORT(args, frame_rate=30)
         else:
