@@ -22,13 +22,13 @@ class Tracker:
 
         if self.use_boost:
             args = SimpleNamespace(
-                track_high_thresh=0.3,
-                track_low_thresh=0.05,
-                new_track_thresh=0.4,
-                track_buffer=30,
-                match_thresh=0.8,
-                proximity_thresh=0.5,
-                appearance_thresh=0.25,
+                track_high_thresh=0.5, # giảm 
+                track_low_thresh=0.3, # increase in b5
+                new_track_thresh=0.8, # tăng
+                track_buffer=300, # tăng
+                match_thresh=0.7,
+                proximity_thresh=0.5, # khi có reID
+                appearance_thresh=0.25, # reID
                 with_reid=False,
                 fast_reid_config=None,
                 fast_reid_weights=None,
@@ -36,11 +36,35 @@ class Tracker:
                 cmc_method="orb",
                 name="exp",
                 ablation=False,
-                mot20=True   # True nếu có nhiều đối tượng chen lấn
+                mot20=False   # True nếu có nhiều đối tượng chen lấn
             )
             self.tracker = BoTSORT(args, frame_rate=30)
         else:
             self.tracker = sv.ByteTrack()
+
+        ## --- add buffer keep lost track ---
+        ## Start:
+        # self.lost_tracks = {}
+        # self.max_lost_time = 360
+        # self.prev_active_ids = set()
+        # self.last_bbox_per_id = {}
+        ## End
+
+    ## Hàm ktra vị trí xhien 
+    ## Start (new)
+    # def is_edge_appearance(self, bbox, frame_width, frame_height):
+    #     x1, y1, x2, y2 = bbox
+    #     center_x = (x1 + x2) / 2
+    #     center_y = (y1 + y2) / 2
+        
+    #     edge_threshold = 80  # 80 pixel từ biên
+        
+    #     return (center_x < edge_threshold or 
+    #             center_x > frame_width - edge_threshold or
+    #             center_y < edge_threshold or 
+    #             center_y > frame_height - edge_threshold)
+    ## End (new)
+        
 
     def detect_frames(self, frames):
         batch_size = 20
@@ -49,6 +73,41 @@ class Tracker:
             detections_batch = self.model.predict(frames[i:i + batch_size], conf=0.3)
             detections += detections_batch
         return detections
+    
+    ## Add match_lost_tracks()
+    ## Start
+    # def iou(self, boxA, boxB):
+    #     xA = max(boxA[0], boxB[0])
+    #     yA = max(boxA[1], boxB[1])
+    #     xB = min(boxA[2], boxB[2])
+    #     yB = min(boxA[3], boxB[3])
+
+    #     interW = max(0, xB - xA + 1)
+    #     interH = max(0, yB - yA + 1)
+    #     interArea = interW * interH
+
+    #     boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
+    #     boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+
+    #     iou = interArea / float(boxAArea + boxBArea - interArea + 1e-6)
+    #     return iou
+
+
+    # def match_lost_tracks(self, new_bbox):
+    #     best_id = None
+    #     best_iou = 0
+
+    #     for lost_id, info in self.lost_tracks.items():
+    #         if (self.current_frame - info["last_frame"]) > self.max_lost_time:
+    #             continue
+
+    #         iou_score = self.iou(new_bbox, info["bbox"])
+    #         if iou_score > 6 and iou_score > best_iou:  # ngưỡng có thể chỉnh
+    #             best_id = lost_id
+    #             best_iou = iou_score
+
+    #     return best_id
+    ## End
 
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
@@ -60,6 +119,14 @@ class Tracker:
         tracks = {"players": [], "refs": [], "ball": []}
 
         for frame_num, (frame, detection) in enumerate(zip(frames, detections)):
+            # Start 
+            # self.current_frame = frame_num   # <--- thêm dòng này để match_lost_tracks dùng được
+            # frame_height, frame_width = frame.shape[:2]
+            # for lost_id in list(self.lost_tracks.keys()):
+            #     if (self.current_frame - self.lost_tracks[lost_id]["last_frame"]) > self.max_lost_time:
+            #         del self.lost_tracks[lost_id]
+            # End
+
             cls_names = detection.names
             cls_names_inv = {v: k for k, v in cls_names.items()}
 
@@ -113,23 +180,103 @@ class Tracker:
                 det_input = np.array(det_input) if len(det_input) > 0 else np.empty((0, 6))
                 tracks_active = self.tracker.update(det_input, frame)
 
+                # # Start
+                # active_ids = set()
+                # # End
+
                 detection_with_tracks = []
                 for track in tracks_active:
                     if not track.is_activated:
                         continue
+
                     tlwh = track.tlwh
                     x1, y1, w, h = tlwh
                     x2, y2 = x1 + w, y1 + h
                     bbox = [int(x1), int(y1), int(x2), int(y2)]
                     track_id = track.track_id
+                    
+                    # Lấy cls_id từ det_input (BoT-SORT không lưu class -> tự map)
 
-                    # Lấy cls_id từ det_input (BoT-SORT không lưu class nên ta phải tự map)
+                    # # Start (keep 1st line)
                     cls_id = track.cls if hasattr(track, "cls") and track.cls is not None else cls_names_inv["player"]
+                    # cls_id = track.cls if hasattr(track, "cls") else cls_names_inv["player"]
+                    # # End
+                    
+                    # # Start (new)
+                    # final_track_id = track_id
 
+                    # if track_id not in self.last_bbox_per_id:
+                    #     if not self.is_edge_appearance(bbox, frame_width, frame_height):
+                    #         # Track xuất hiện giữa khung hình -> ưu tiên thử khôi phục
+                    #         recovered_id = self.match_lost_tracks(bbox)
+                    #         if recovered_id is not None:
+                    #             print(f"RECOVERED: Track {track_id} -> {recovered_id} (middle appearance)")
+                    #             final_track_id = recovered_id
+                    #             # Xóa khỏi lost buffer
+                    #             if recovered_id in self.lost_tracks:
+                    #                 del self.lost_tracks[recovered_id]
+                    #         else:
+                    #             print(f"WARNING: Track {track_id} appeared in middle, no recovery - ACCEPT NEW ID")
+                    #     else:
+                    #         print(f"NEW: Track {track_id} appeared from edge - ACCEPTED")
+                    # # End (new)
 
+                    # # Start (keep 1st line)
                     detection_with_tracks.append((bbox, cls_id, track_id))
+                    # detection_with_tracks.append((bbox, cls_id, final_track_id))
+                    # active_ids.add(final_track_id)
+                    # # End (new)
 
+                    # # Start
+                    # # Update lost buffer
+                    # if final_track_id in self.lost_tracks:
+                    #     del self.lost_tracks[final_track_id]
+                    # self.last_bbox_per_id[final_track_id] = bbox
+                    # # End
 
+                # # Start
+                # # Update lost_tracks
+                # # Tìm ID nào vừa mất ở frame này
+                # just_lost_ids = self.prev_active_ids - active_ids
+                # for lost_id in just_lost_ids:
+                #     if lost_id in self.last_bbox_per_id:
+                #         self.lost_tracks[lost_id] = {
+                #             "bbox": self.last_bbox_per_id[lost_id],
+                #             "last_frame": frame_num
+                #         }
+
+                # # --- Thử khôi phục ID từ lost buffer --- (new)
+                # matched_bboxes = {tuple(track[0]) for track in detection_with_tracks}
+                
+                # # Kiểm tra các detection chưa được match
+                # additional_tracks = []
+                # for xyxy, cls_id in zip(detection_supervision.xyxy, detection_supervision.class_id):
+                #     bbox = [int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])]
+                    
+                #     # Nếu bbox này chưa được track match
+                #     if tuple(bbox) not in matched_bboxes and cls_id == cls_names_inv['player']:
+                #         # Thử khôi phục từ lost buffer
+                #         recovered_id = self.match_lost_tracks(bbox)
+                #         if recovered_id is not None:
+                #             # print(f"RECOVERED: Untracked detection -> {recovered_id}")
+                #             additional_tracks.append((bbox, cls_id, recovered_id))
+                #             # Xóa khỏi lost buffer
+                #             if recovered_id in self.lost_tracks:
+                #                 del self.lost_tracks[recovered_id]
+                #             # Cập nhật bbox
+                #             self.last_bbox_per_id[recovered_id] = bbox
+
+                # # Thêm các track được khôi phục
+                # detection_with_tracks.extend(additional_tracks)
+                
+                # # Cập nhật lại active_ids để bao gồm recovered tracks
+                # for _, _, recovered_id in additional_tracks:
+                #     active_ids.add(recovered_id)
+                
+                # self.prev_active_ids = active_ids
+
+                # # End
+        
             else:
                 # ByteTrack giữ nguyên
                 detection_with_tracks = []
@@ -161,19 +308,20 @@ class Tracker:
 
         return tracks
     
+
+    
     def draw_ellipse(self, frame, bbox, color, track_id=None):
         y2 = int(bbox[3])
         x_center, _ = get_center_of_bbox(bbox)
         width = get_bbox_width(bbox)
 
-        # Vẽ ellipse nhỏ gọn ngay dưới chân
         cv2.ellipse(
             frame,
-            center=(x_center, y2),   # dịch ellipse xuống chút cho thoáng
-            axes=(int(0.8 * width), int(0.3 * width)),  # ellipse gọn
+            center=(x_center, y2),  
+            axes=(int(0.8 * width), int(0.3 * width)),  
             angle=0.0,
             startAngle=-45,
-            endAngle=235,  # nửa ellipse phía trên
+            endAngle=235,  
             color=color,
             thickness=2,
             lineType=cv2.LINE_4
