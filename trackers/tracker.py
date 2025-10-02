@@ -6,6 +6,7 @@ import sys
 import cv2
 from types import SimpleNamespace
 import numpy as np
+import pandas as pd
 
 sys.path.append('../')
 from utils import get_center_of_bbox, get_bbox_width
@@ -22,11 +23,11 @@ class Tracker:
 
         if self.use_boost:
             args = SimpleNamespace(
-                track_high_thresh=0.55, # giảm 
+                track_high_thresh=0.6, # giảm 
                 track_low_thresh=0.3, # increase in b5
-                new_track_thresh=0.8, # tăng
-                track_buffer=300, # -> giảm ID switch = tăng track_buffer + giảm match_thresh 
-                match_thresh=0.7,
+                new_track_thresh=0.7, # tăng
+                track_buffer=150, # -> giảm ID switch = tăng track_buffer + giảm match_thresh 
+                match_thresh=0.75,
                 proximity_thresh=0.5, # khi có reID
                 appearance_thresh=0.25, # reID
                 with_reid=False,
@@ -49,6 +50,19 @@ class Tracker:
         # self.prev_active_ids = set()
         # self.last_bbox_per_id = {}
         ## End
+    
+
+    def interpolate_ball_positions(self, ball_positions):
+        ball_positions = [x.get(1,{}).get('bbox',[]) for x in ball_positions]
+        df_ball_positions = pd.DataFrame(ball_positions, columns=['x1','y1','x2','y2'])
+
+        df_ball_positions = df_ball_positions.interpolate()
+        df_ball_positions = df_ball_positions.bfill()
+
+        ball_positions = [{1: {"bbox":x}} for x in df_ball_positions.to_numpy().tolist()]
+
+        return ball_positions
+   
 
     ## Hàm ktra vị trí xhien 
     ## Start (new)
@@ -70,7 +84,12 @@ class Tracker:
         batch_size = 20
         detections = []
         for i in range(0, len(frames), batch_size):
-            detections_batch = self.model.predict(frames[i:i + batch_size], conf=0.3)
+            detections_batch = self.model.predict(
+                    frames[i:i + batch_size],
+                    imgsz=960,     # tăng size để bắt bóng nhỏ
+                    conf=0.3,     # hạ ngưỡng confidence
+                    iou=0.45
+                )
             detections += detections_batch
         return detections
     
@@ -344,13 +363,16 @@ class Tracker:
                 cv2.FILLED
             )
 
+            brightness = sum(color) / 3
+            text_color = (0, 0, 0) if brightness > 127 else (255, 255, 255)
+
             cv2.putText(
                 frame,
                 f"{track_id}",
                 (x1_rect + 8, y2_rect - 4),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                (0, 0, 0),
+                text_color,
                 2
             )
 

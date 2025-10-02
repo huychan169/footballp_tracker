@@ -27,6 +27,9 @@ def main():
 
     #     break
 
+    # Interpolate Ball positions 
+    tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
+
     # Assign Player teams
     team_assigner = TeamAssigner()
     team_assigner.assign_team_color(video_frames[0],
@@ -46,7 +49,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks)
 
     # Save video
-    save_video(output_video_frames, 'output_videos/match1_clip_104_color.avi')
+    save_video(output_video_frames, 'output_videos/match1_clip_104_102_ss.avi')
 
 
 

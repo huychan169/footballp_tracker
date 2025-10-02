@@ -13,3 +13,16 @@ python yolo_inference.py
 ```
 
 The output is file .avi at runs/detect
+
+# tracker
+
+Draw bbox:
+
+```
+
+
+```
+
+# Clustering players into 2 teams
+
+team_assigner
