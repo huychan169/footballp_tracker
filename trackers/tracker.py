@@ -30,7 +30,7 @@ class Tracker:
                 match_thresh=0.75,
                 proximity_thresh=0.5, # khi có reID
                 appearance_thresh=0.25, # reID
-                with_reid=False,
+                with_reid=True,
                 fast_reid_config=None,
                 fast_reid_weights=None,
                 device="cuda",

@@ -49,7 +49,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks)
 
     # Save video
-    save_video(output_video_frames, 'output_videos/match1_clip_104_102_ss.avi')
+    save_video(output_video_frames, 'output_videos/match1_clip_104_103.avi')
 
 
 
