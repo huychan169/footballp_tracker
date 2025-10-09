@@ -2,6 +2,8 @@ from utils import read_video, save_video
 from trackers import Tracker
 import cv2
 from team_assigner import TeamAssigner
+from view_transformer import ViewTransformer
+
 
 def main():
     # Read video 
@@ -27,6 +29,13 @@ def main():
 
     #     break
 
+    # Get object positions 
+    tracker.add_position_to_tracks(tracks)
+
+    # Vỉew Transformer
+    view_transformers = ViewTransformer()
+    view_transformers.add_transformed_position_to_tracks(tracks)
+
     # Interpolate Ball positions 
     tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
 
@@ -49,7 +58,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks)
 
     # Save video
-    save_video(output_video_frames, 'output_videos/match1_clip_104_103.avi')
+    save_video(output_video_frames, 'output_videos/match1_clip_104_106.avi')
 
 
 
