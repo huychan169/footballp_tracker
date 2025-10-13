@@ -1,11 +1,7 @@
 import cv2
-<<<<<<< Updated upstream
-from team_assigner import TeamAssigner
-=======
 from trackers import Tracker
 from team_assigner.team_assigner import TeamAssigner
 
->>>>>>> Stashed changes
 
 def main():
     in_path  = 'input_videos/match1_cut5m.mp4'
@@ -17,31 +13,6 @@ def main():
         raise RuntimeError(f"Cannot open {in_path}")
 
     tracker = Tracker('models/best_ylv8_ep50.pt', use_boost=True)
-<<<<<<< Updated upstream
-
-    tracks = tracker.get_object_tracks(video_frames,
-                                       read_from_stub=False,
-                                       stub_path='stubs/track_stubs.pkl')
-    
-    # # save croppred image of a player
-    # for track_id, player in tracks['players'][0].items():
-    #     bbox = player['bbox']
-    #     frame = video_frames[0]
-        
-    #     # crop bbox from frame
-    #     cropped_image = frame[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
-
-    #     # save the cropped image
-    #     cv2.imwrite(f'output_videos/cropped_img.jpg', cropped_image)
-
-    #     break
-
-    # Interpolate Ball positions 
-    tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
-
-    # Assign Player teams
-=======
->>>>>>> Stashed changes
     team_assigner = TeamAssigner()
 
     writer = None
@@ -56,10 +27,6 @@ def main():
         if not ret:  # hết video
             break
 
-<<<<<<< Updated upstream
-    # Save video
-    save_video(output_video_frames, 'output_videos/match1_clip_104_103.avi')
-=======
         # VideoWriter ở frame đầu (sau khi đã có frame thật để lấy w,h)
         if writer is None:
             h, w = frame.shape[:2]
@@ -68,7 +35,6 @@ def main():
             if not writer.isOpened():
                 cap.release()
                 raise RuntimeError(f"Cannot open writer for {out_path}")
->>>>>>> Stashed changes
 
         tracks_one = tracker.get_object_tracks([frame], read_from_stub=False, stub_path=None)
         cur_tracks = {k: v[0] for k, v in tracks_one.items()}  

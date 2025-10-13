@@ -9,11 +9,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append('../')
-<<<<<<< Updated upstream
-from utils import get_center_of_bbox, get_bbox_width
-=======
 from utils import get_center_of_bbox, get_bbox_width, get_foot_position
->>>>>>> Stashed changes
 
 # Import BoT-SORT
 sys.path.append("BoT-SORT")
@@ -34,11 +30,7 @@ class Tracker:
                 match_thresh=0.75,
                 proximity_thresh=0.5, # khi có reID
                 appearance_thresh=0.25, # reID
-<<<<<<< Updated upstream
-                with_reid=True,
-=======
                 with_reid=False,
->>>>>>> Stashed changes
                 fast_reid_config=None,
                 fast_reid_weights=None,
                 device="cuda",
@@ -59,69 +51,6 @@ class Tracker:
         # self.last_bbox_per_id = {}
         ## End
     
-<<<<<<< Updated upstream
-
-    def interpolate_ball_positions(self, ball_positions):
-        ball_positions = [x.get(1,{}).get('bbox',[]) for x in ball_positions]
-        df_ball_positions = pd.DataFrame(ball_positions, columns=['x1','y1','x2','y2'])
-
-        df_ball_positions = df_ball_positions.interpolate()
-        df_ball_positions = df_ball_positions.bfill()
-
-        ball_positions = [{1: {"bbox":x}} for x in df_ball_positions.to_numpy().tolist()]
-
-        return ball_positions
-   
-
-    ## Hàm ktra vị trí xhien 
-    ## Start (new)
-    # def is_edge_appearance(self, bbox, frame_width, frame_height):
-    #     x1, y1, x2, y2 = bbox
-    #     center_x = (x1 + x2) / 2
-    #     center_y = (y1 + y2) / 2
-        
-    #     edge_threshold = 80  # 80 pixel từ biên
-        
-    #     return (center_x < edge_threshold or 
-    #             center_x > frame_width - edge_threshold or
-    #             center_y < edge_threshold or 
-    #             center_y > frame_height - edge_threshold)
-    ## End (new)
-        
-
-    def detect_frames(self, frames):
-        batch_size = 20
-        detections = []
-        for i in range(0, len(frames), batch_size):
-            detections_batch = self.model.predict(
-                    frames[i:i + batch_size],
-                    imgsz=960,     # tăng size để bắt bóng nhỏ
-                    conf=0.3,     # hạ ngưỡng confidence
-                    iou=0.45
-                )
-            detections += detections_batch
-        return detections
-    
-    ## Add match_lost_tracks()
-    ## Start
-    # def iou(self, boxA, boxB):
-    #     xA = max(boxA[0], boxB[0])
-    #     yA = max(boxA[1], boxB[1])
-    #     xB = min(boxA[2], boxB[2])
-    #     yB = min(boxA[3], boxB[3])
-
-    #     interW = max(0, xB - xA + 1)
-    #     interH = max(0, yB - yA + 1)
-    #     interArea = interW * interH
-
-    #     boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-    #     boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-
-    #     iou = interArea / float(boxAArea + boxBArea - interArea + 1e-6)
-    #     return iou
-
-
-=======
     def add_position_to_tracks(self, tracks):
         for object, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
@@ -207,7 +136,6 @@ class Tracker:
     #     return iou
 
 
->>>>>>> Stashed changes
     # def match_lost_tracks(self, new_bbox):
     #     best_id = None
     #     best_iou = 0
