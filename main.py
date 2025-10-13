@@ -1,66 +1,74 @@
-from utils import read_video, save_video
-from trackers import Tracker
 import cv2
-from team_assigner import TeamAssigner
-from view_transformer import ViewTransformer
+from trackers import Tracker
+from team_assigner.team_assigner import TeamAssigner
 
 
 def main():
-    # Read video 
-    video_frames = read_video('input_videos/match1_clip_104.mp4')
+    in_path  = 'input_videos/match1_cut5m.mp4'
+    out_path = 'output_videos/match1_cut5m_1013n.avi'
 
-    # Initialize Tracker
+    # Stream
+    cap = cv2.VideoCapture(in_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open {in_path}")
+
     tracker = Tracker('models/best_ylv8_ep50.pt', use_boost=True)
-
-    tracks = tracker.get_object_tracks(video_frames,
-                                       read_from_stub=False,
-                                       stub_path='stubs/track_stubs.pkl')
-    
-    # # save croppred image of a player
-    # for track_id, player in tracks['players'][0].items():
-    #     bbox = player['bbox']
-    #     frame = video_frames[0]
-        
-    #     # crop bbox from frame
-    #     cropped_image = frame[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
-
-    #     # save the cropped image
-    #     cv2.imwrite(f'output_videos/cropped_img.jpg', cropped_image)
-
-    #     break
-
-    # Get object positions 
-    tracker.add_position_to_tracks(tracks)
-
-    # Vỉew Transformer
-    view_transformers = ViewTransformer()
-    view_transformers.add_transformed_position_to_tracks(tracks)
-
-    # Interpolate Ball positions 
-    tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
-
-    # Assign Player teams
     team_assigner = TeamAssigner()
-    team_assigner.assign_team_color(video_frames[0],
-                                    tracks['players'][0])
-    
-    for frame_num, player_track in enumerate(tracks['players']):
-        for player_id, track in player_track.items():
-            team = team_assigner.get_player_team(video_frames[frame_num],
-                                                 track['bbox'],
-                                                 player_id)
-            tracks['players'][frame_num][player_id]['team'] = team
-            tracks['players'][frame_num][player_id]['team_color'] = team_assigner.team_colors[team]
 
+    writer = None
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
+    team_fit_done = False
+    ball_buffer = []
 
-    # Draw object Tracks
-    output_video_frames = tracker.draw_annotations(video_frames, tracks)
+    # đọc -> detect/track -> team + interpolate -> draw
+    while True:
+        ret, frame = cap.read()
+        if not ret:  # hết video
+            break
 
-    # Save video
-    save_video(output_video_frames, 'output_videos/match1_clip_104_106.avi')
+        # VideoWriter ở frame đầu (sau khi đã có frame thật để lấy w,h)
+        if writer is None:
+            h, w = frame.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*"XVID")
+            writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+            if not writer.isOpened():
+                cap.release()
+                raise RuntimeError(f"Cannot open writer for {out_path}")
 
+        tracks_one = tracker.get_object_tracks([frame], read_from_stub=False, stub_path=None)
+        cur_tracks = {k: v[0] for k, v in tracks_one.items()}  
 
+        # interpolation
+        ball_buffer.append(cur_tracks['ball'])
+        if len(ball_buffer) >= 30:
+            ball_buffer = tracker.interpolate_ball_positions(ball_buffer)  
+            cur_tracks['ball'] = ball_buffer[-1]
+
+        # Fit màu đội 1 lần khi đã có player
+        if not team_fit_done and cur_tracks['players']:
+            team_assigner.assign_team_color(frame, cur_tracks['players'])
+            # có "guard", check kmeans fit
+            team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
+
+        # Gán team 
+        for pid, info in cur_tracks['players'].items():
+            team = team_assigner.get_player_team(frame, info['bbox'], pid)
+            color = team_assigner.team_colors.get(team, (0, 0, 255)) 
+            frame = tracker.draw_ellipse(frame, info['bbox'], color, pid)
+
+        # Draw
+        for _, rf in cur_tracks['refs'].items():
+            frame = tracker.draw_ellipse(frame, rf['bbox'], (0, 255, 255)) 
+        for _, bl in cur_tracks['ball'].items():
+            frame = tracker.draw_bbox_with_id(frame, bl['bbox'], (0, 255, 0))  
+
+        writer.write(frame)
+
+    cap.release()
+    if writer is not None:
+        writer.release()
+    print(f"[DONE] Wrote: {out_path}")
 
 
 if __name__ == '__main__':
