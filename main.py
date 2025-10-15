@@ -1,11 +1,11 @@
 import cv2
 from trackers import Tracker
 from team_assigner.team_assigner import TeamAssigner
-
+# from ball_tracker import Ball_tracker
 
 def main():
-    in_path  = 'input_videos/match1_cut5m.mp4'
-    out_path = 'output_videos/match1_cut5m_1013n.avi'
+    in_path  = 'input_videos/match1_clip_104_cfr.mp4'
+    out_path = 'output_videos/match1_clip_104_cfr_1015n.avi'
 
     # Stream
     cap = cv2.VideoCapture(in_path)
@@ -19,7 +19,7 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
     team_fit_done = False
-    ball_buffer = []
+    # ball_buffer = []
 
     # đọc -> detect/track -> team + interpolate -> draw
     while True:
@@ -39,16 +39,16 @@ def main():
         tracks_one = tracker.get_object_tracks([frame], read_from_stub=False, stub_path=None)
         cur_tracks = {k: v[0] for k, v in tracks_one.items()}  
 
-        # interpolation
-        ball_buffer.append(cur_tracks['ball'])
-        if len(ball_buffer) >= 30:
-            ball_buffer = tracker.interpolate_ball_positions(ball_buffer)  
-            cur_tracks['ball'] = ball_buffer[-1]
+        # # interpolation
+        # ball_buffer.append(cur_tracks['ball'])
+        # if len(ball_buffer) >= 30:
+        #     ball_buffer = tracker.interpolate_ball_positions(ball_buffer)  
+        #     cur_tracks['ball'] = ball_buffer[-1]
 
         # Fit màu đội 1 lần khi đã có player
         if not team_fit_done and cur_tracks['players']:
             team_assigner.assign_team_color(frame, cur_tracks['players'])
-            # có "guard", check kmeans fit
+            # có guard, check kmeans fit
             team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
 
         # Gán team 
@@ -64,6 +64,7 @@ def main():
             frame = tracker.draw_bbox_with_id(frame, bl['bbox'], (0, 255, 0))  
 
         writer.write(frame)
+        
 
     cap.release()
     if writer is not None:
