@@ -24,11 +24,11 @@ class Tracker:
 
         if self.use_boost:
             args = SimpleNamespace(
-                track_high_thresh=0.6, # giảm 
-                track_low_thresh=0.3, # increase in b5
-                new_track_thresh=0.7, # tăng
-                track_buffer=150, # -> giảm ID switch = tăng track_buffer + giảm match_thresh 
-                match_thresh=0.75,
+                track_high_thresh=0.55, # giảm 
+                track_low_thresh=0.1, # increase in b5
+                new_track_thresh=0.8, # tăng
+                track_buffer=240, # -> giảm ID switch = tăng track_buffer + giảm match_thresh 
+                match_thresh=0.7,
                 proximity_thresh=0.5, # khi có reID
                 appearance_thresh=0.25, # reID
                 with_reid=False,
@@ -46,26 +46,30 @@ class Tracker:
 
 
     
-    def add_position_to_tracks(self, tracks):
-        for object, object_tracks in tracks.items():
-            for frame_num, track in enumerate(object_tracks):
-                for track_id, track_info in track.items():
-                    bbox = track_info['bbox']
-                    if object == 'ball':
-                        position = get_center_of_bbox(bbox)
-                    else:
-                        position = get_foot_position(bbox)
-                    tracks[object][frame_num][track_id]['position'] = position
+    # def add_position_to_tracks(self, tracks):
+    #     for object, object_tracks in tracks.items():
+    #         for frame_num, track in enumerate(object_tracks):
+    #             for track_id, track_info in track.items():
+    #                 bbox = track_info['bbox']
+    #                 if object == 'ball':
+    #                     position = get_center_of_bbox(bbox)
+    #                 else:
+    #                     position = get_foot_position(bbox)
+    #                 tracks[object][frame_num][track_id]['position'] = position
 
 
-    def interpolate_ball_positions(self, ball_positions):
-        import pandas as pd
-        ball_positions = [x.get(1,{}).get('bbox',[]) for x in ball_positions]
-        df_ball_positions = pd.DataFrame(ball_positions, columns=['x1','y1','x2','y2'])
-        df_ball_positions = df_ball_positions.interpolate()
-        df_ball_positions = df_ball_positions.bfill()
-        ball_positions = [{1: {"bbox": x}} for x in df_ball_positions.to_numpy().tolist()]
-        return ball_positions
+
+    """
+    Pending
+    """
+    # def interpolate_ball_positions(self, ball_positions):
+    #     import pandas as pd
+    #     ball_positions = [x.get(1,{}).get('bbox',[]) for x in ball_positions]
+    #     df_ball_positions = pd.DataFrame(ball_positions, columns=['x1','y1','x2','y2'])
+    #     df_ball_positions = df_ball_positions.interpolate()
+    #     df_ball_positions = df_ball_positions.bfill()
+    #     ball_positions = [{1: {"bbox": x}} for x in df_ball_positions.to_numpy().tolist()]
+    #     return ball_positions
 
    
 
@@ -76,7 +80,7 @@ class Tracker:
             detections_batch = self.model.predict(
                     frames[i:i + batch_size],
                     imgsz=960,     
-                    conf=0.1,    
+                    conf=0.3,    
                     iou=0.45
                 )
             detections += detections_batch
@@ -231,29 +235,26 @@ class Tracker:
 
 
 
-    def draw_annotations(self, video_frames, tracks):
-        output_video_frames = []
-        for frame_num, frame in enumerate(video_frames):
-            frame = frame.copy()
+    def draw_annotations_frame(self, frame, tracks_frame):
 
-            player_dict = tracks["players"][frame_num]
-            ball_dict = tracks["ball"][frame_num]
-            ref_dict = tracks["refs"][frame_num]
+        out = frame.copy()
+        player_dict = tracks_frame.get("players", {}) or {}
+        ref_dict    = tracks_frame.get("refs", {}) or {}
+        ball_dict   = tracks_frame.get("ball", {}) or {}
 
-            # Draw Players
-            for track_id, player in player_dict.items():
-                color = player.get("team_color", (0, 0, 255))
-                frame = self.draw_ellipse(frame, player["bbox"], color, track_id)
+        # Players
+        for track_id, player in player_dict.items():
+            color = player.get("team_color", (0, 0, 255))
+            out = self.draw_ellipse(out, player["bbox"], color, track_id)
 
-            # Draw Ref
-            for _, ref in ref_dict.items():
-                frame = self.draw_ellipse(frame, ref["bbox"], (0, 255, 255))
+        # Refs
+        for _, ref in ref_dict.items():
+            out = self.draw_ellipse(out, ref["bbox"], (0, 255, 255))
 
-            # Draw Ball
-            for track_id, ball in ball_dict.items():
-                frame = self.draw_bbox_with_id(frame, ball["bbox"], (0, 255, 0))
+        # Ball
+        for _, ball in ball_dict.items():
+            out = self.draw_bbox_with_id(out, ball["bbox"], (0, 255, 0))
 
-            output_video_frames.append(frame)
+        return out
 
-        return output_video_frames
 

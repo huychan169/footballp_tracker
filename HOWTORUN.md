@@ -14,14 +14,11 @@ python yolo_inference.py
 
 The output is file .avi at runs/detect
 
+# input/ouput (Read n write vid)
+
+utils/video_utils.py
+
 # tracker
-
-Draw bbox:
-
-```
-
-
-```
 
 # Clustering players into 2 teams
 
@@ -53,8 +50,4 @@ def interpolate_ball_positions(self, ball_positions):
     ...
 ```
 
-main.py
-
-```
-tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
-```
+ball_tracker/ball_tracker.py

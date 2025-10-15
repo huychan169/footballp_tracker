@@ -1,63 +1,36 @@
-# import cv2
-
-# def read_video(video_path):
-#     cap = cv2.VideoCapture(video_path)
-#     frames = []
-#     while True:
-#         ret, frame = cap.read()
-#         if not ret:
-#             break
-#         frames.append(frame)
-#     return frames
-
-# def save_video(output_video_frames, output_video_path):
-#     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-#     out = cv2.VideoWriter(output_video_path, fourcc, 24, (output_video_frames[0].shape[1], output_video_frames[0].shape[0]))
-#     for frame in output_video_frames:
-#         out.write(frame)
-#     out.release()
-
+# utils/video_utils.py
 import cv2
 
-def read_video(video_path):
-    cap = cv2.VideoCapture(video_path)
-    frames = []
+def open_video(path):
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open {path}")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    return cap, fps, w, h
+
+def iter_frames(cap):
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        frames.append(frame)
-    cap.release()
-    return frames
+        yield frame
 
+def create_writer(path, fps, width, height, fourcc_str="XVID"):
+    fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+    writer = cv2.VideoWriter(path, fourcc, fps, (width, height))
+    if not writer.isOpened():
+        raise RuntimeError(f"Cannot open writer for {path}")
+    return writer
 
-# def save_video(output_video_frames, output_video_path, fps=24):
-#     """Ghi video trực tiếp từng frame để không dồn RAM."""
-#     if not output_video_frames:
-#         return
+def write_frame(writer, frame):
+    writer.write(frame)
 
-#     height, width = output_video_frames[0].shape[:2]
-#     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-#     out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+def close_video(cap):
+    if cap is not None:
+        cap.release()
 
-#     for frame in output_video_frames:
-#         out.write(frame)
-#         # giải phóng bộ nhớ của frame sau khi ghi
-#         del frame  
-
-#     out.release()
-
-def save_video(frames_iter, output_video_path, fps=24):
-    first_frame = next(iter(frames_iter))
-    height, width = first_frame.shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
-
-    # ghi frame đầu
-    out.write(first_frame)
-
-    # ghi các frame còn lại
-    for frame in frames_iter:
-        out.write(frame)
-
-    out.release()
+def close_writer(writer):
+    if writer is not None:
+        writer.release()
