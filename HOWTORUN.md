@@ -41,7 +41,7 @@ for frame_num, player_track in enumerate(tracks['players']):
         tracks['players'][frame_num][player_id]['team_color'] = team_assigner.team_colors[team]
 ```
 
-# Interpolate ball position
+# Interpolate ball position (pending)
 
 tracker.py
 
@@ -51,3 +51,7 @@ def interpolate_ball_positions(self, ball_positions):
 ```
 
 ball_tracker/ball_tracker.py
+
+# Tính bù trừ camera (camera estimator)
+
+\camera_movement_estimator\camera_movement_estimator.py
