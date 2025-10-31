@@ -37,6 +37,10 @@ class CameraMovementEstimator:
         if self.prev_pts is None or len(self.prev_pts) == 0:
             self.prev_pts = cv2.goodFeaturesToTrack(self.prev_gray, **self.feature_params)
 
+        if self.prev_pts is None or len(self.prev_pts) == 0:
+            self.prev_gray = gray
+            return 0.0, 0.0
+
         new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
             self.prev_gray, gray, self.prev_pts, None, **self.lk_params
         )
