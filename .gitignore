@@ -27,6 +27,7 @@
 /models/
 /checkpoints/
 /runs/
+/data/*
 
 # Archives
 *.zip
