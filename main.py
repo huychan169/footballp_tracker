@@ -1,7 +1,6 @@
 from trackers import Tracker
 from team_assigner.team_assigner import TeamAssigner
 from utils.video_utils import open_video, iter_frames, create_writer, write_frame, close_video, close_writer
-from gsr_adapter import GameStateAdapter
 from camera_movement_estimator import CameraMovementEstimator
 
 from FieldMarkings.run import CamCalib, MODEL_PATH, LINES_FILE, blend
@@ -9,13 +8,12 @@ from FieldMarkings.run import CamCalib, MODEL_PATH, LINES_FILE, blend
 from BallAction.Test_Visual import BallActionSpot
 
 def main():
-    in_path  = 'data/inputs/Testvideo.mp4'
-    out_path = 'data/outputs/TestVideo.avi'
+    in_path  = 'video/input_videos/mach1_cut5m_2.mp4'
+    out_path = 'video/output_videos/match1_cut5m_2_117v.avi'
 
     cap, fps, w, h = open_video(in_path)
     tracker = Tracker('data/models/detect/best_ylv8_ep50.pt', use_boost=True)
-    team_assigner = TeamAssigner()
-    gsr = GameStateAdapter(out_jsonl="data/outputs/game_state.jsonl")
+    team_assigner = TeamAssigner(flip_guard_frames=8)
 
     writer = create_writer(out_path, fps, w, h)
     team_fit_done = False
@@ -33,7 +31,7 @@ def main():
 
         # Fit team 1 lần khi có player
         if not team_fit_done and cur_tracks['players']:
-            team_assigner.assign_team_color(frame, cur_tracks['players'])
+            team_assigner.assign_team_model(frame, cur_tracks['players'])
             team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
 
         # Gán team & màu vào tracks
@@ -70,7 +68,6 @@ def main():
         # Action Spotting
         drawn = ball_action.visualize_frame(drawn, frame_idx)
 
-        gsr.emit(frame_idx, cur_tracks)
         write_frame(writer, drawn)
         frame_idx += 1
         
