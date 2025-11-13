@@ -81,6 +81,32 @@ class CamCalib:
                 cv2.circle(drawn, (int(feet[0]), int(feet[1])), 8, color, -1)
         
         return drawn
+    
+    def calibrate_player_feet_world(self, xyxyn): #add
+        if self.H is None:
+            return None
+
+        x1, y1, x2, y2 = xyxyn
+        x1 *= self.IMG_W; y1 *= self.IMG_H
+        x2 *= self.IMG_W; y2 *= self.IMG_H
+        cx = x1 + (x2 - x1) / 2.0
+        cy = y2
+        point2D = np.array([cx, cy, 1.0], dtype=np.float64)
+
+        # feet3d ở hệ toạ độ pitch (thường là mét)
+        feet3d = unproject_image_point(self.H, point2D=point2D)
+        feet3d = np.asarray(feet3d).reshape(-1)
+        if feet3d.size < 2 or not np.all(np.isfinite(feet3d[:2])):
+            return None
+
+        X, Y = float(feet3d[0]), float(feet3d[1])
+
+        # CHUẨN HOÁ về tiêu chuẩn SoccerNet: 105m x 68m (x dọc chiều dài sân, y dọc bề ngang)
+        # (tuỳ orientation H của bạn có thể bị đảo dấu/hoán vị; nếu thấy "trái-phải" ngược, bạn đổi X=105-X)
+        X = max(0.0, min(105.0, X))
+        Y = max(0.0, min(68.0,  Y))
+        return (X, Y)
+    
 
 def blend(img1, img2, scale=0.5, alpha=0.5):
     img2 = cv2.resize(img2, (int(img2.shape[1]*scale), int(img2.shape[0]*scale)))
