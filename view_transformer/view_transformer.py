@@ -65,15 +65,48 @@ class ViewTransformer2D:
 
             x, y = float(feet_xy[0]), float(feet_xy[1])
             if np.isfinite(x) and np.isfinite(y):
-                # clip vào khung minimap (thêm margin chống “lọt biên”)
                 x = float(np.clip(x, 0.0, self.cam.IMG_W - 1.0))
                 y = float(np.clip(y, 0.0, self.cam.IMG_H - 1.0))
                 res[pid] = (x, y)
         return res
 
+    def compute_ball(
+        self,
+        frame_w: int,
+        frame_h: int,
+        balls: Dict[int, Dict]
+    ) -> Optional[Tuple[float, float]]:
+
+        if self.cam.H is None or not balls:
+            return None
+
+        for _, info in balls.items():
+            bbox = info.get("bbox", None)
+            if bbox is None:
+                continue
+            x1, y1, x2, y2 = bbox
+            x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
+            feet_xy = self.cam.calibrate_player_feet((x1_n, y1_n, x2_n, y2_n))
+            if feet_xy is None:
+                continue
+
+            x, y = float(feet_xy[0]), float(feet_xy[1])
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+
+            x = float(np.clip(x, 0.0, self.cam.IMG_W - 1.0))
+            y = float(np.clip(y, 0.0, self.cam.IMG_H - 1.0))
+            return (x, y)
+
+        return None
+
     def update_history(self, pid2xy: Dict[int, Tuple[float, float]]) -> None:
         for pid, xy in pid2xy.items():
             self.minimap.update_player(pid, xy)
+
+    def update_ball(self, ball_xy: Optional[Tuple[float, float]]) -> None:
+        if ball_xy is not None:
+            self.minimap.update_ball(ball_xy)
 
     def render_minimap(
         self,

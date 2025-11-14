@@ -93,7 +93,7 @@ class CamCalib:
         cy = y2
         point2D = np.array([cx, cy, 1.0], dtype=np.float64)
 
-        # feet3d ở hệ toạ độ pitch (thường là mét)
+        # feet3d ở hệ toạ độ pitch 
         feet3d = unproject_image_point(self.H, point2D=point2D)
         feet3d = np.asarray(feet3d).reshape(-1)
         if feet3d.size < 2 or not np.all(np.isfinite(feet3d[:2])):
@@ -101,8 +101,6 @@ class CamCalib:
 
         X, Y = float(feet3d[0]), float(feet3d[1])
 
-        # CHUẨN HOÁ về tiêu chuẩn SoccerNet: 105m x 68m (x dọc chiều dài sân, y dọc bề ngang)
-        # (tuỳ orientation H của bạn có thể bị đảo dấu/hoán vị; nếu thấy "trái-phải" ngược, bạn đổi X=105-X)
         X = max(0.0, min(105.0, X))
         Y = max(0.0, min(68.0,  Y))
         return (X, Y)
