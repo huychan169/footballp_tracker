@@ -19,6 +19,7 @@ class ViewTransformer2D:
         margin: int = 6
     ):
         self.cam = cam_calib
+        self.cam.H_prev = None
         self.scale = float(scale)
         self.alpha = float(alpha)
         self.minimap = Minimap2D(

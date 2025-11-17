@@ -8,9 +8,10 @@ from FieldMarkings.run import CamCalib, MODEL_PATH, LINES_FILE, blend
 
 from BallAction.Test_Visual import BallActionSpot
 
+
 def main():
     in_path  = 'video/input_videos/match1_cut45s.mp4'
-    out_path = 'video/output_videos/match1_cut45s_1114v.avi'
+    out_path = 'video/output_videos/match1_cut45s_1117v.avi'
 
     cap, fps, w, h = open_video(in_path)
     tracker = Tracker('data/models/detect/best_ylv8_ep50.pt', use_boost=True)
@@ -20,20 +21,17 @@ def main():
     team_fit_done = False
     cm_est = None
     frame_idx = 0
+
     cam_calib = CamCalib(MODEL_PATH, LINES_FILE)
     vt = ViewTransformer2D(
         cam_calib,
         scale=0.5,
         alpha=0.4,
         dot_radius=8,
-        ema_alpha=0.4,
-        max_step=10,
-        margin=4
+        ema_alpha=0.2,
+        max_step=15,
+        margin=6
     )
-
-    # offset tích lũy chuyển động camera 
-    cam_off_x = 0.0
-    cam_off_y = 0.0
 
     ball_action = BallActionSpot()
 
@@ -47,10 +45,17 @@ def main():
             team_assigner.assign_team_model(frame, cur_tracks['players'])
             team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
 
+        # Gán team & màu vào tracks 
+        for pid, info in cur_tracks['players'].items():
+            team = team_assigner.get_player_team(frame, info['bbox'], pid)
+            info['team'] = team
+            info['team_color'] = team_assigner.team_colors.get(team, (0, 0, 255))
+
         vt.update_homography_from_frame(frame)
 
+        # Draw
         drawn = tracker.draw_annotations_frame(frame, cur_tracks)
-        
+
         # camera movement
         if cm_est is None:
             cm_est = CameraMovementEstimator(frame)
@@ -58,25 +63,21 @@ def main():
         else:
             dx, dy = cm_est.update(frame)
 
-        # tích luỹ offset camera
-        cam_off_x += dx
-        cam_off_y += dy
-
         drawn = cm_est.draw_overlay(drawn, dx, dy)
 
         # minimap
         id2color, id2label, pid2team = {}, {}, {}
 
         # players
+        TEAM_COLORS = team_assigner.team_colors
         for pid, info in cur_tracks['players'].items():
-            team = team_assigner.get_player_team(frame, info['bbox'], pid)
-            info['team'] = team
-            color_bgr = tuple(int(c) for c in team_assigner.team_colors.get(team, (0, 0, 255)))
+            team = info.get('team', None)
+            color_bgr = tuple(int(c) for c in TEAM_COLORS.get(team, (0, 0, 255)))
             id2color[pid] = color_bgr
             id2label[pid] = pid
             pid2team[pid] = team
 
-        # refs 
+        # refs
         REF_COLOR = (0, 255, 255)
         if 'refs' in cur_tracks and cur_tracks['refs']:
             for rid, info in cur_tracks['refs'].items():
@@ -87,15 +88,6 @@ def main():
         pid_feet_players = vt.compute_feet(w, h, cur_tracks['players'])
         pid_feet_refs    = vt.compute_feet(w, h, cur_tracks.get('refs', {}))
         pid_feet_all     = {**pid_feet_players, **pid_feet_refs}
-
-        # scale sang IMG_W, IMG_H
-        scale_x = cam_calib.IMG_W / w
-        scale_y = cam_calib.IMG_H / h
-
-        for pid, (x, y) in list(pid_feet_all.items()):
-            x_stab = x - cam_off_x * scale_x
-            y_stab = y - cam_off_y * scale_y
-            pid_feet_all[pid] = (x_stab, y_stab)
 
         vt.update_history(pid_feet_all)
 
@@ -113,13 +105,14 @@ def main():
 
         write_frame(writer, drawn)
         frame_idx += 1
-        
+
         if frame_idx >= fps * 300:
             break
 
     close_video(cap)
     close_writer(writer)
     print(f"[DONE] Wrote: {out_path}")
+
 
 if __name__ == '__main__':
     main()
