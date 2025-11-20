@@ -1,0 +1,37 @@
+1. Phán đoán nguyên nhân (Root Cause Analysis)
+A. Về Homography (Nguyên nhân chính gây "nhảy" vị trí)
+Tin tưởng tuyệt đối vào HRNet: Hiện tại CamCalib chấp nhận mọi ma trận $H$ miễn là nó hữu hạn. HRNet là mô hình xác suất, nó có thể nhận diện nhầm vạch kẻ sân với biển quảng cáo hoặc cấu trúc khán đài. Khi đó, $H$ sẽ bị sai lệch lớn.
+Thiếu cơ chế "Sanity Check": Không có bước kiểm tra ngược (reprojection). Một ma trận $H$ tốt phải đảm bảo khi chiếu các điểm keypoints 2D ngược lại mô hình sân 3D chuẩn, sai số phải nhỏ.
+Hệ quả: Khi $H$ sai, toàn bộ cầu thủ trên minimap bị dịch chuyển tức thời (teleport) dù vị trí thực tế (bbox) không đổi.
+
+B. Về phép chiếu chân (Feet Projection)
+Bbox là hình chữ nhật 2D bao quanh vật thể 3D: Phần đáy của Bbox (bottom) thường thấp hơn vị trí chân chạm đất thực tế do dính bóng đổ (shadow) hoặc do góc quay nghiêng làm chân ở phía sau bị che khuất.
+Hard-code 8%: Việc fix cứng tỉ lệ feet_offset_ratio = 0.08 chỉ đúng ở một số góc quay nhất định. Khi cầu thủ ở xa hoặc gần biên (nơi méo hình lớn), tỉ lệ này không còn đúng.
+
+2. Đề xuất cải thiện chi tiết
+Dưới đây là lộ trình cải thiện theo thứ tự ưu tiên để giải quyết triệt để vấn đề vị trí:
+Ưu tiên 1: Xây dựng "Cổng kiểm soát" Homography (Homography Validity Gate)
+Bạn cần từ chối cập nhật $H$ nếu nó không tốt hơn cái cũ hoặc vượt quá ngưỡng sai số.
+Giải pháp kỹ thuật:
+Tính Reprojection Error (RMSE): Sau khi tìm được $H$ từ tập điểm $P_{src}$ (ảnh) và $P_{dst}$ (sân chuẩn), hãy tính sai số trung bình khoảng cách giữa $P_{dst}$ và $H \cdot P_{src}$.
+Logic lọc:
+Python
+# Pseudo-code logic
+error = compute_reprojection_error(H_new, keypoints_2d, keypoints_world)
+THRESHOLD = 10.0 # Pixel error (cần tinh chỉnh)
+if error < THRESHOLD:
+    last_good_H = blend(last_good_H, H_new, alpha) # Blend nhẹ để mượt
+    is_H_valid = True
+else:
+    # H xấu, giữ nguyên H cũ hoặc dùng Optical Flow để bù trừ tạm thời
+    H_new = last_good_H
+    is_H_valid = False
+Fallback thông minh: 
+Khi is_H_valid == False, thay vì giữ nguyên $H$ cũ (khiến map bị đứng hình nếu camera quay), hãy dùng vector Optical Flow $(dx, dy)$ toàn cục mà bạn đã tính để dịch chuyển $H$ cũ một lượng tương ứng.
+Ưu tiên 2: Nâng cấp xác định điểm chạm đất (Advanced Feet Localization)
+Thay vì đoán mò dựa trên đáy hộp (bbox bottom), hãy dùng dữ liệu chính xác hơn.
+Cách 1 (Tốt nhất - Nếu có Pose): Nếu pipeline của bạn có chạy Pose Estimation (Keypoints cơ thể), hãy lấy trung điểm của hai mắt cá chân (ankles). Đây là điểm chạm đất chính xác nhất, bất kể bóng đổ.
+Cách 2 (Cải thiện Heuristic): Nếu chỉ có Bbox, hãy dùng bộ lọc thích nghi (adaptive):Loại bỏ hộp "dẹt": Nếu width/height của bbox > 0.8 (cầu thủ ngã hoặc sai detection), bỏ qua không chiếu lên map.Cắt bóng đổ (Shadow clipping): Sử dụng histogram màu ở vùng đáy bbox. Nếu vùng đáy quá tối so với màu sân, cắt bớt phần đáy bbox lên cao hơn 8% mặc định.
+Ưu tiên 3: Làm mượt chuyển động trên Minimap (Kalman Filter)
+Hiện tại bạn đang dùng EMA (trung bình trượt) để làm mượt vị trí trên map. EMA có nhược điểm là gây ra độ trễ (lag) khi cầu thủ đổi hướng chạy nhanh.
+Giải pháp: Thay EMA bằng Kalman Filter đơn giản (hoặc ByteTrack logic trên toạ độ map).Kalman Filter có mô hình vật lý (vận tốc), nó sẽ dự đoán vị trí tiếp theo tốt hơn và ít bị trễ (lag) hơn so với việc chỉ lấy trung bình vị trí cũ và mới.

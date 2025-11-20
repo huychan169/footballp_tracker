@@ -1,5 +1,5 @@
 # view_transformer/minimap.py
-from collections import defaultdict, deque
+from collections import deque
 import numpy as np
 import cv2
 
@@ -11,7 +11,8 @@ class Minimap2D:
         dot_radius=8,
         ema_alpha=0.1,      # nhỏ hơn -> mượt hơn (0.2~0.4)
         max_step=12,        # px/frame: chặn bước nhảy bất thường
-        margin=6           
+        margin=6,
+        player_ttl=45
     ):
         self.W = int(width)
         self.H = int(height)
@@ -19,9 +20,10 @@ class Minimap2D:
         self.ema_alpha = float(ema_alpha)
         self.max_step = float(max_step)
         self.margin = int(margin)
+        self.player_ttl = int(max(1, player_ttl))
 
         # vị trí cầu thủ
-        self.history = defaultdict(lambda: deque(maxlen=2))
+        self.history = {}
 
         # vị trí bóng
         self.ball_hist = deque(maxlen=3)
@@ -46,19 +48,25 @@ class Minimap2D:
         newp = a * newp + (1.0 - a) * prev
         return newp
 
-    def update_player(self, pid, pos_xy):
+    def update_player(self, pid, pos_xy, frame_idx):
         if pos_xy is None:
             return
         newp = np.array(pos_xy, dtype=float)
         if not np.all(np.isfinite(newp)):
             return
 
-        if len(self.history[pid]) > 0:
-            prev = self.history[pid][-1]
+        if pid in self.history:
+            prev = self.history[pid]["pos"]
             newp = self._smooth_step(prev, newp)
 
         newp = self._clip(newp)
-        self.history[pid].append(newp)
+        self.history[pid] = {"pos": newp, "last_seen": int(frame_idx)}
+
+    def prune(self, frame_idx):
+        stale = [pid for pid, meta in self.history.items()
+                 if frame_idx - meta.get("last_seen", frame_idx) > self.player_ttl]
+        for pid in stale:
+            self.history.pop(pid, None)
 
     def update_ball(self, pos_xy):
         if pos_xy is None:
@@ -70,16 +78,20 @@ class Minimap2D:
         self.ball_hist.append(newp)
 
     def _boost_team_color(self, bgr):
-
         c = np.array([[bgr]], dtype=np.uint8)  # shape (1,1,3)
         hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
         h, s, v = hsv[0, 0]
 
-        # saturation & brightness lên tối thiểu
-        s = max(s, 150)
-        v = max(v, 200)
-        hsv[0, 0] = (h, s, v)
+        # nếu là màu xám (saturation thấp) thì chỉ tăng sáng để giữ tông xám
+        if s < 30 or (max(bgr) - min(bgr)) < 10:
+            s = min(s, 30)
+            v = max(v, 215)
+        else:
+            # màu đậm -> tăng saturation + brightness để dễ nhìn
+            s = max(s, 150)
+            v = max(v, 200)
 
+        hsv[0, 0] = (h, s, v)
         bgr_boost = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0]
         return (int(bgr_boost[0]), int(bgr_boost[1]), int(bgr_boost[2]))
 
@@ -88,15 +100,16 @@ class Minimap2D:
         canvas = base_pitch_img.copy()
 
         # player
-        for pid, pts in self.history.items():
-            if len(pts) == 0:
+        for pid, meta in self.history.items():
+            pos = meta.get("pos")
+            if pos is None:
                 continue
 
             color = (0, 0, 255)  # default
             if id2color and pid in id2color:
                 color = self._boost_team_color(id2color[pid])
 
-            cx, cy = tuple(np.round(pts[-1]).astype(int))
+            cx, cy = tuple(np.round(pos).astype(int))
             if 0 <= cx < self.W and 0 <= cy < self.H:
                 cv2.circle(canvas, (cx, cy), self.dot_radius, color, -1, lineType=cv2.LINE_AA)
 

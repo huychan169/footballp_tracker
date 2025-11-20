@@ -4,7 +4,7 @@ Ellipses are assumed to be defined by a*x^2+b*x*y+c*y^2+d*x+e*y+f=0,
 lines: k*x+h=y.
 """
 import warnings
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Any, Union
 
 import cv2
 import numpy as np
@@ -324,7 +324,7 @@ def find_tangent_point(ellipse: List[float], point: Tuple[float, float],
 
 
 def add_conic_points(points: Dict[str, List[Tuple[float, float]]],
-                     intersections: Dict[int, Tuple[float, float] | None],
+                     intersections: Dict[int, Optional[Tuple[float, float]]],
                      img_size: Tuple[int, int] = (960, 540)):
     mask = []
     # Populate known points
@@ -425,7 +425,7 @@ def select_intersect(res, points: Dict[str, List[Tuple[float, float]]],
         return top
 
 
-def ellipse_line_intersect(ellipse, line: np.ndarray) -> np.ndarray | None:
+def ellipse_line_intersect(ellipse, line: np.ndarray) -> Optional[np.ndarray]:
     """Find intersection of a line and an ellipse.
 
     Args:

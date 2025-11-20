@@ -16,8 +16,19 @@
 # Model weights
 *.pt
 *.pth
+*.pth.tar*
 *.onnx
 *.weights
+*.ckpt
+*.safetensors
+*.bin
+*.pkl
+*.npz
+*.npy
+*.h5
+*.pb
+# Serialized datasets
+*.lmdb
 
 # Dataset & model folders
 /input_videos/
@@ -26,8 +37,18 @@
 /datasets/
 /models/
 /checkpoints/
-/runs/
 /data/*
+/runs/
+*/runs/
+checkpoints/
+*/checkpoints/
+outputs/
+*/outputs/
+wandb/
+lightning_logs/
+logs/
+tensorboard/
+experiments/
 
 # Archives
 *.zip

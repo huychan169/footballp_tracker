@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 def load_video_predictions():
-    raw_predictions_path = "data/models/ball_action/test_raw_predictions.npz"
+    raw_predictions_path = "models/ball_action/test_raw_predictions.npz"
     raw_predictions_npz = np.load(str(raw_predictions_path))
     frame_indexes = raw_predictions_npz["frame_indexes"]
     raw_predictions = raw_predictions_npz["raw_predictions"]

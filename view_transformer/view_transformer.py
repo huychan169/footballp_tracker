@@ -16,24 +16,28 @@ class ViewTransformer2D:
         dot_radius: int = 8,
         ema_alpha: float = 0.3,
         max_step: float = 30.0,
-        margin: int = 6
+        margin: int = 6,
+        feet_offset_ratio: float = 0.08,
+        player_ttl: int = 45
     ):
         self.cam = cam_calib
         self.scale = float(scale)
         self.alpha = float(alpha)
+        self.feet_offset_ratio = float(max(0.0, feet_offset_ratio))
         self.minimap = Minimap2D(
             width=self.cam.IMG_W,
             height=self.cam.IMG_H,
             dot_radius=dot_radius,
             ema_alpha=ema_alpha,
             max_step=max_step,
-            margin=margin
+            margin=margin,
+            player_ttl=player_ttl
         )
         self.base_pitch: Optional[np.ndarray] = None
 
     def update_homography_from_frame(self, annotated_frame: np.ndarray) -> None:
         self.cam(annotated_frame)
-        if self.base_pitch is None and self.cam.H is not None:
+        if self.base_pitch is None and self.cam.H is not None and self.cam.has_valid_h:
             self.base_pitch = self._make_base_pitch()
 
     def _make_base_pitch(self) -> np.ndarray:
@@ -52,11 +56,29 @@ class ViewTransformer2D:
         players: Dict[int, Dict]
     ) -> Dict[int, Tuple[float, float]]:
         res: Dict[int, Tuple[float, float]] = {}
-        if self.cam.H is None:
+        if self.cam.H is None or not getattr(self.cam, "has_valid_h", False):
             return res
 
         for pid, info in players.items():
             x1, y1, x2, y2 = info["bbox"]
+            height = y2 - y1
+            width = x2 - x1
+            if height <= 1.0 or width <= 1.0:
+                continue
+            aspect = width / max(height, 1e-6)
+            if aspect > 0.9 or aspect < 0.2:
+                continue  # skip implausible boxes
+
+            # Adaptive foot offset: smaller offset for small boxes, larger for tall ones
+            fh_ratio = min(1.0, height / float(frame_h))
+            adaptive_offset = self.feet_offset_ratio
+            if fh_ratio < 0.12:
+                adaptive_offset = max(0.04, self.feet_offset_ratio * 0.5)
+            elif fh_ratio > 0.35:
+                adaptive_offset = min(0.12, self.feet_offset_ratio * 1.5)
+            if self.feet_offset_ratio > 1e-6 and height > 1.0:
+                foot_y = y2 - adaptive_offset * height
+                y2 = max(y1, foot_y)
             x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
 
             feet_xy = self.cam.calibrate_player_feet((x1_n, y1_n, x2_n, y2_n))
@@ -77,7 +99,7 @@ class ViewTransformer2D:
         balls: Dict[int, Dict]
     ) -> Optional[Tuple[float, float]]:
 
-        if self.cam.H is None or not balls:
+        if self.cam.H is None or not getattr(self.cam, "has_valid_h", False) or not balls:
             return None
 
         for _, info in balls.items():
@@ -100,9 +122,10 @@ class ViewTransformer2D:
 
         return None
 
-    def update_history(self, pid2xy: Dict[int, Tuple[float, float]]) -> None:
+    def update_history(self, pid2xy: Dict[int, Tuple[float, float]], frame_idx: int) -> None:
         for pid, xy in pid2xy.items():
-            self.minimap.update_player(pid, xy)
+            self.minimap.update_player(pid, xy, frame_idx)
+        self.minimap.prune(frame_idx)
 
     def update_ball(self, ball_xy: Optional[Tuple[float, float]]) -> None:
         if ball_xy is not None:
