@@ -185,10 +185,17 @@ class Tracker:
                 if cls_id == cls_names_inv['ref']:
                     tracks["refs"][frame_num][track_id] = {"bbox": bbox}
 
-            # bóng thì lấy trực tiếp từ detection
-            for bbox, cls_id in zip(detection_supervision.xyxy, detection_supervision.class_id):
+            # bóng thì lấy trực tiếp từ detection (giữ score để lọc sau)
+            for bbox, cls_id, score in zip(
+                detection_supervision.xyxy,
+                detection_supervision.class_id,
+                detection_supervision.confidence,
+            ):
                 if cls_id == cls_names_inv['ball']:
-                    tracks["ball"][frame_num][1] = {"bbox": bbox.tolist()}
+                    tracks["ball"][frame_num][1] = {
+                        "bbox": bbox.tolist(),
+                        "score": float(score),
+                    }
 
             if self.use_boost and self.max_player_ids is not None:
                 players_frame = tracks["players"][frame_num]
