@@ -150,8 +150,54 @@ class GMC:
 
             return H
 
-        # Match descriptors.
-        knnMatches = self.matcher.knnMatch(self.prevDescriptors, descriptors, 2)
+        # # Match descriptors.
+        # knnMatches = self.matcher.knnMatch(self.prevDescriptors, descriptors, 2)
+        # =============================
+        # SAFETY CHECKS – FIX CRASH
+        # =============================
+
+        # Case 1 — No descriptors extracted
+        if descriptors is None or self.prevDescriptors is None:
+            self.prevFrame = frame.copy()
+            self.prevKeyPoints = copy.copy(keypoints)
+            self.prevDescriptors = copy.copy(descriptors)
+            return H
+
+        # Case 2 — Empty descriptors
+        if len(descriptors) == 0 or len(self.prevDescriptors) == 0:
+            self.prevFrame = frame.copy()
+            self.prevKeyPoints = copy.copy(keypoints)
+            self.prevDescriptors = copy.copy(descriptors)
+            return H
+
+        # Case 3 — shape mismatch
+        if descriptors.shape[1] != self.prevDescriptors.shape[1]:
+            # Force convert or skip
+            descriptors = descriptors.astype(self.prevDescriptors.dtype)
+
+        # Case 4 — dtype mismatch
+        if descriptors.dtype != self.prevDescriptors.dtype:
+            descriptors = descriptors.astype(self.prevDescriptors.dtype)
+
+        # Try knn match safely
+        try:
+            knnMatches = self.matcher.knnMatch(self.prevDescriptors, descriptors, 2)
+        except cv2.error:
+            self.prevFrame = frame.copy()
+            self.prevKeyPoints = copy.copy(keypoints)
+            self.prevDescriptors = copy.copy(descriptors)
+            return H
+
+        # Case 5 — empty match result
+        if knnMatches is None or len(knnMatches) == 0:
+            self.prevFrame = frame.copy()
+            self.prevKeyPoints = copy.copy(keypoints)
+            self.prevDescriptors = copy.copy(descriptors)
+            return H
+
+        # =============================
+        #   CONTINUE MATCH FILTERING
+        # =============================
 
         # Filtered matches based on smallest spatial distance
         matches = []

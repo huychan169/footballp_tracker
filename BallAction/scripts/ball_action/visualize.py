@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 from collections import defaultdict
+from typing import Union
 
 from tqdm import tqdm
 import numpy as np
@@ -145,7 +146,7 @@ def visualize_game(game: str,
                         game_visualization_dir, game_video_data, gpu_id)
 
 
-def visualize_fold(experiment: str, fold: int | str, gpu_id: int, challenge: bool):
+def visualize_fold(experiment: str, fold: Union[int, str], gpu_id: int, challenge: bool):
     print(f"Visualize games: {experiment=}, {fold=}, {gpu_id=} {challenge=}")
     if challenge:
         data_split = "challenge"

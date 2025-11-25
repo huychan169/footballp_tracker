@@ -2,6 +2,7 @@ import re
 import time
 import random
 from pathlib import Path
+from typing import Union, Dict
 
 import numpy as np
 import cv2  # type: ignore
@@ -11,7 +12,7 @@ from scipy.signal import find_peaks
 from torch import nn
 
 
-def get_video_info(video_path: str | Path) -> dict[str, int | float]:
+def get_video_info(video_path: Union[str, Path]) -> Dict[str, Union[int, float]]:
     video = cv2.VideoCapture(str(video_path))
     video_info = dict(
         frame_count=int(video.get(cv2.CAP_PROP_FRAME_COUNT)),

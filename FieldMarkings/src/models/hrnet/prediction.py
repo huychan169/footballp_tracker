@@ -46,7 +46,7 @@ class CameraCreator:
                  img_size: Tuple[int, int] = (960, 540),
                  conf_thresh: float = 0.2,
                  algorithm: str = 'opencv_calibration',
-                 lines_file: str | None = None,
+                 lines_file: Optional[str] = None,
                  **kwargs):
         """Base class for camera calibration and all relevant heuristics
             management.
@@ -127,7 +127,7 @@ class CameraCreator:
         self.stat = {'n': 0, 'frames_4': 0,
                      'frames_4_6': 0, 'frames_bad_cam': 0}
 
-    def __call__(self, pred, name: str | None = None) -> Optional[Camera]:
+    def __call__(self, pred, name: Optional[str] = None) -> Optional[Camera]:
         cam = None
         try:
             cam = self.algorithm(pred, name)
@@ -135,7 +135,7 @@ class CameraCreator:
             print(f'Camera initialization exc: {e}')
         return cam
 
-    def opencv_calibration(self, pred, name: str | None) -> Optional[Camera]:
+    def opencv_calibration(self, pred, name: Optional[str]) -> Optional[Camera]:
         cam = None
         camera_points = []
         world_points = []
@@ -169,7 +169,7 @@ class CameraCreator:
             cam.position = (- np.transpose(cam.rotation) @ tvect[0]).T[0]
         return cam
 
-    def opencv_calibration_multiplane(self, pred, name: str | None)\
+    def opencv_calibration_multiplane(self, pred, name: Optional[str] = None)\
             -> Optional[Camera]:
         cam = None
         camera_points = defaultdict(Tuple[float, float])
@@ -242,7 +242,7 @@ class CameraCreator:
                     cam.refine_camera(matched_points)
         return cam
 
-    def iterative_voter(self, pred, name: str | None) -> Optional[Camera]:
+    def iterative_voter(self, pred, name: Optional[str] = None) -> Optional[Camera]:
         self.conf_thresh = 0.5
         try:
             cam = self.original_voter(pred, name)
@@ -256,7 +256,7 @@ class CameraCreator:
             if cam is not None:
                 return cam
 
-    def voter(self, pred, name: str | None) -> Optional[Camera]:
+    def voter(self, pred, name: Optional[str] = None) -> Optional[Camera]:
         print(f'Processing {name}@{self.conf_thresh}')
         cam = None
         camera_points = defaultdict(Tuple[float, float])
@@ -277,7 +277,6 @@ class CameraCreator:
                         camera_points[i] = line_points[i]
                         print('Point added', name, i, line_points[i])
         # camera_points = resolve_ambiguous_points(camera_points)
-        print('Camera_points:', camera_points)
         hom_cam = None
         hom_cam_rmse = 10000  # Just a big default value
         hom_cam_pred = get_camera_from_homography(camera_points)
@@ -329,14 +328,14 @@ class CameraCreator:
             print('return hom_cam', name, hom_cam_rmse)
         return cam
 
-    def _get_points_from_lines(self, name: str | None = None):
+    def _get_points_from_lines(self, name: Optional[str] = None):
         points = {}
         if self.lines_data is not None and name is not None\
                 and name in self.lines_data:
             points = self.lines_data[name]
         return points
 
-    def original_voter(self, pred, name: str | None) -> Optional[Camera]:
+    def original_voter(self, pred, name: Optional[str] = None) -> Optional[Camera]:
         cam = None
         camera_points = defaultdict(Tuple[float, float])
         world_points_sampled = []
@@ -363,7 +362,6 @@ class CameraCreator:
                         camera_points[i] = line_points[i]
                         print('Point added', name, i, line_points[i])
         matched_points = get_matched_points(camera_points)
-        print('Camera_points:', camera_points)
         hom_cam = None
         hom_cam_rmse = 10000
         hom_cam_pred = get_camera_from_homography(camera_points)
@@ -402,11 +400,11 @@ class CameraCreator:
             flags = flags | cv2.CALIB_FIX_K1 | cv2.CALIB_FIX_K2 |\
                 cv2.CALIB_FIX_K3 | cv2.CALIB_FIX_K4 | cv2.CALIB_FIX_K5 |\
                 cv2.CALIB_FIX_K6
-            print(world_points_sampled, camera_points_sampled)
+            #print(world_points_sampled, camera_points_sampled)
             rms, mtx, dist, rvect, tvect = cv2.calibrateCamera(
                 world_points_sampled, camera_points_sampled, self.img_size,
                 None, None, flags=flags)
-            print(rms, mtx)
+            #print(rms, mtx)
 
             cam = Camera(*self.img_size)
             cam.calibration = mtx

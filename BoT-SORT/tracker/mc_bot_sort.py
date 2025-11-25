@@ -8,7 +8,15 @@ from tracker.gmc import GMC
 from tracker.basetrack import BaseTrack, TrackState
 from tracker.kalman_filter import KalmanFilter
 
-from fast_reid.fast_reid_interfece import FastReIDInterface
+try:
+    from fast_reid.fast_reid_interfece import FastReIDInterface
+except ImportError:
+    FastReIDInterface = None
+
+try:
+    from reid.torchreid_interface import TorchreIDInterface
+except ImportError:
+    TorchreIDInterface = None
 
 
 class STrack(BaseTrack):
@@ -247,9 +255,33 @@ class BoTSORT(object):
         # ReID module
         self.proximity_thresh = args.proximity_thresh
         self.appearance_thresh = args.appearance_thresh
+        self.reid_backend = getattr(args, "reid_backend", "fastreid")
 
         if args.with_reid:
-            self.encoder = FastReIDInterface(args.fast_reid_config, args.fast_reid_weights, args.device)
+            backend = (self.reid_backend or "fastreid").lower()
+            if backend == "torchreid":
+                if TorchreIDInterface is None:
+                    raise ImportError("Torchreid backend requested but reid package is unavailable")
+                weights = getattr(args, "torchreid_weights", None)
+                if not weights:
+                    raise ValueError("Torchreid backend requires args.torchreid_weights")
+                self.encoder = TorchreIDInterface(
+                    weights,
+                    device=args.device,
+                    batch_size=getattr(args, "reid_batch", 16)
+                )
+            elif backend == "fastreid":
+                if FastReIDInterface is None:
+                    raise ImportError("FastReID backend requested but fast_reid package is unavailable")
+                if not getattr(args, "fast_reid_config", None) or not getattr(args, "fast_reid_weights", None):
+                    raise ValueError("FastReID backend requires config and weights paths.")
+                self.encoder = FastReIDInterface(
+                    args.fast_reid_config,
+                    args.fast_reid_weights,
+                    args.device
+                )
+            else:
+                raise ValueError(f"Unknown ReID backend: {backend}")
 
         self.gmc = GMC(method=args.cmc_method, verbose=[args.name, args.ablation])
 

@@ -17,7 +17,7 @@ from src.models.hrnet.metamodel import HRNetMetaModel
 from src.models.hrnet.prediction import CameraCreator
 
 
-MODEL_PATH = 'data/models/HRNet_57_hrnet48x2_57_003/evalai-018-0.536880.pth'
+MODEL_PATH = 'models/HRNet_57_hrnet48x2_57_003/evalai-018-0.536880.pth'
 LINES_FILE = None # '/workdir/data/result/line_model_result.pkl'
 DEVICE = 'cuda:0'  # Device for running inference
 
@@ -38,8 +38,14 @@ class CamCalib:
         )
 
         self.H = None
+        self.last_good_H = None
+        self.updated_this_frame = False
+        self.h_alpha = 0.25
+        self.has_valid_h = False
 
     def __call__(self, img):
+        self.updated_this_frame = False
+        self.has_valid_h = False
         to_tensor = T.ToTensor()
         img = cv2.resize(img, (self.IMG_W, self.IMG_H))
         tensor = to_tensor(img).unsqueeze(0).to(DEVICE)
@@ -47,7 +53,56 @@ class CamCalib:
         cam = self.calibrator(pred)
         
         if cam is not None:
-            self.H = cam.calibration @ cam.rotation @ np.concatenate((np.eye(3)[:, :2], -cam.position.reshape(3, 1)), axis=1)
+            H_candidate = cam.calibration @ cam.rotation @ np.concatenate(
+                (np.eye(3)[:, :2], -cam.position.reshape(3, 1)), axis=1
+            )
+            H_candidate = self._normalize_h(H_candidate)
+            if self._is_valid_h(H_candidate) and self._is_stable(H_candidate):
+                self.H = self._smooth_homography(self.H, H_candidate, alpha=self.h_alpha)
+                self.last_good_H = self.H.copy()
+                self.updated_this_frame = True
+                self.has_valid_h = True
+            elif self.last_good_H is not None:
+                self.H = self.last_good_H.copy()
+                self.has_valid_h = True
+        elif self.last_good_H is not None:
+            self.H = self.last_good_H.copy()
+            self.has_valid_h = True
+
+    def _normalize_h(self, H):
+        if H is None:
+            return None
+        scale = H[-1, -1]
+        if abs(scale) < 1e-6:
+            return H
+        return H / scale
+
+    def _smooth_homography(self, H_old, H_new, alpha=0.25):
+        if H_old is None:
+            return H_new
+        blended = (1 - alpha) * H_old + alpha * H_new
+        return self._normalize_h(blended)
+
+    def _is_valid_h(self, H):
+        if H is None:
+            return False
+        if not np.all(np.isfinite(H)):
+            return False
+        if abs(H[2, 2]) < 1e-6:
+            return False
+        return True
+
+    def _is_stable(self, H_new, max_cond=1e6, max_delta=1.5):
+        """Basic sanity: condition number and relative delta vs last_good_H."""
+        if H_new is None:
+            return False
+        cond = np.linalg.cond(H_new)
+        if not np.isfinite(cond) or cond > max_cond:
+            return False
+        if self.last_good_H is None:
+            return True
+        delta = np.linalg.norm(H_new - self.last_good_H) / (np.linalg.norm(self.last_good_H) + 1e-6)
+        return delta < max_delta
 
     def calibrate_player_feet(self, xyxyn):
         if self.H is None:
