@@ -1,0 +1,169 @@
+1. Thiết kế kiến trúc video đường bóng (ball trajectory video)
+Input
+
+tracks["ball"] → bbox bóng từng frame
+
+vt.compute_ball(bbox) → tọa độ bóng 2D trong sân
+
+FPS: từ video gốc hoặc mặc định 25
+
+Processing
+
+Lưu history 150–200 frame (tương đương 5–7s)
+
+Vẽ trail:
+
+line mỏng 2–3 px
+
+màu fading (nhạt dần về phía cũ)
+
+đầu bóng nổi bật (trắng + viền đen)
+
+Nếu mất bóng → giữ trail nhưng dc mờ dần
+
+Output
+
+Video 2D minimap, ví dụ:
+
+output/ball_trail_2d.mp4
+
+✅ 2. Cập nhật ball_hist cho 5–7 giây
+
+Trong view_transformer/minimap.py:
+
+self.ball_hist = deque(maxlen=200)  # 200 frames ~ 8 seconds @25fps
+
+✅ 3. Hàm vẽ trail (5–7 giây mượt)
+
+Thêm vào view_transformer/minimap.py:
+
+def draw_ball_trail(self, canvas, color=(255, 200, 80)):
+    """
+    Vẽ live-trail 5–7 giây (200 frames) của bóng.
+    Tail fading từ cũ -> mới.
+    """
+    if len(self.ball_hist) < 2:
+        return canvas
+
+    pts = list(self.ball_hist)
+    N = len(pts)
+
+    for i in range(1, N):
+        x1, y1 = map(int, pts[i-1])
+        x2, y2 = map(int, pts[i])
+
+        # độ mờ theo tuổi điểm
+        alpha = i / N  # điểm gần hiện tại đậm hơn
+        c = (
+            int(color[0] * alpha),
+            int(color[1] * alpha),
+            int(color[2] * alpha)
+        )
+
+        cv2.line(canvas, (x1, y1), (x2, y2), c, 2, cv2.LINE_AA)
+
+    return canvas
+
+✅ 4. Hàm xuất video 2D Heat Map + Ball Trail
+
+Tạo file mới:
+export_ball_trail_video.py
+
+import cv2
+import numpy as np
+
+def export_ball_trail_video(
+        video_path,
+        output_path,
+        tracks,
+        cam_calib,
+        vt,
+        fps=25,
+        width=1050,
+        height=680
+):
+
+    # nền sân 2D (màu xanh lá nhạt)
+    base = np.zeros((height, width, 3), dtype=np.uint8)
+    base[:] = (40, 110, 40)
+
+    # mở video writer
+    out = cv2.VideoWriter(
+        output_path,
+        cv2.VideoWriter_fourcc(*'mp4v'),
+        fps,
+        (width, height)
+    )
+
+    total_frames = len(tracks["ball"])
+
+    for f in range(total_frames):
+        frame_tracks = tracks["ball"][f]
+
+        # clone sân
+        canvas = base.copy()
+
+        # nếu không có bóng -> skip vẽ bóng và chỉ ghi trail cũ
+        if len(frame_tracks) == 0:
+            vt.update_ball(None)
+            canvas = vt.minimap.draw_ball_trail(canvas)
+            out.write(canvas)
+            continue
+
+        # lấy bbox bóng đầu tiên
+        bbox = list(frame_tracks.values())[0]["bbox"]
+
+        # tính 2d point
+        ball_2d = vt.compute_ball(bbox)
+
+        # lưu vào history
+        vt.update_ball(ball_2d)
+
+        # vẽ trail dài 5–7 giây
+        canvas = vt.minimap.draw_ball_trail(canvas)
+
+        # vẽ bóng hiện tại (nếu có)
+        if ball_2d is not None:
+            cx, cy = map(int, ball_2d)
+            cv2.circle(canvas, (cx, cy), 8, (255,255,255), -1)   # lõi trắng
+            cv2.circle(canvas, (cx, cy), 12, (0,0,0), 2)        # viền đen
+
+        out.write(canvas)
+
+    out.release()
+    print("⬆ Xuất xong video ball trail:", output_path)
+
+✅ 5. Gọi từ main.py
+
+Sau khi chạy pipeline xong (sau draw_and_save_video_streaming):
+
+from export_ball_trail_video import export_ball_trail_video
+
+export_ball_trail_video(
+    video_path=args.video,
+    output_path="output/ball_trail_2d.mp4",
+    tracks=tracks,
+    cam_calib=cam_calib,
+    vt=vt,
+    fps=fps
+)
+
+🎥 6. Kết quả video
+
+Video xuất ra sẽ hiển thị:
+
+✦ Nền sân 2D (xanh lá hoặc trắng)
+✦ Quỹ đạo bóng dài 7 giây → fading đẹp mắt
+✦ Bóng hiện tại nổi bật (viền đen + lõi trắng)
+✦ Không có cầu thủ, không có overlay khác
+
+Hình dung frame ví dụ:
+
+ ┌─────────────────────────────────────────┐
+ │                                         │
+ │      (live trail 5–7s fade dần)         │
+ │         \   \   \    \    ○             │
+ │           \   \   \    \                │
+ │                                         │
+ │                                         │
+ └─────────────────────────────────────────┘

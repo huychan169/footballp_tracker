@@ -18,7 +18,12 @@ class ViewTransformer2D:
         max_step: float = 30.0,
         margin: int = 6,
         feet_offset_ratio: float = 0.08,
-        player_ttl: int = 45
+        player_ttl: int = 45,
+        ball_tail: int = 6,
+        ball_ema_alpha: float = 0.45,
+        ball_max_step: float = 25.0,
+        ball_ttl: int = 30,
+        ball_tail_long: int = 200
     ):
         self.cam = cam_calib
         self.cam.H_prev = None
@@ -32,7 +37,12 @@ class ViewTransformer2D:
             ema_alpha=ema_alpha,
             max_step=max_step,
             margin=margin,
-            player_ttl=player_ttl
+            player_ttl=player_ttl,
+            ball_tail=ball_tail,
+            ball_ema_alpha=ball_ema_alpha,
+            ball_max_step=ball_max_step,
+            ball_ttl=ball_ttl,
+            ball_tail_long=ball_tail_long
         )
         self.base_pitch: Optional[np.ndarray] = None
 
@@ -97,7 +107,8 @@ class ViewTransformer2D:
         self,
         frame_w: int,
         frame_h: int,
-        balls: Dict[int, Dict]
+        balls: Dict[int, Dict],
+        use_center: bool = False
     ) -> Optional[Tuple[float, float]]:
 
         if self.cam.H is None or not getattr(self.cam, "has_valid_h", False) or not balls:
@@ -108,6 +119,9 @@ class ViewTransformer2D:
             if bbox is None:
                 continue
             x1, y1, x2, y2 = bbox
+            if use_center:
+                cy = 0.5 * (y1 + y2)
+                y2 = cy
             x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
             feet_xy = self.cam.calibrate_player_feet((x1_n, y1_n, x2_n, y2_n))
             if feet_xy is None:
@@ -128,9 +142,11 @@ class ViewTransformer2D:
             self.minimap.update_player(pid, xy, frame_idx)
         self.minimap.prune(frame_idx)
 
-    def update_ball(self, ball_xy: Optional[Tuple[float, float]]) -> None:
-        if ball_xy is not None:
-            self.minimap.update_ball(ball_xy)
+    def update_ball(self, ball_xy: Optional[Tuple[float, float]], frame_idx: int, is_airball: bool = False, keep_last: bool = False) -> None:
+        self.minimap.update_ball(ball_xy, frame_idx, is_airball=is_airball, keep_last=keep_last)
+
+    def get_last_ball_xy(self) -> Optional[Tuple[float, float]]:
+        return self.minimap.get_last_ball_xy()
 
     def render_minimap(
         self,
