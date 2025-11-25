@@ -21,6 +21,7 @@ class ViewTransformer2D:
         player_ttl: int = 45
     ):
         self.cam = cam_calib
+        self.cam.H_prev = None
         self.scale = float(scale)
         self.alpha = float(alpha)
         self.feet_offset_ratio = float(max(0.0, feet_offset_ratio))

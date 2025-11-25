@@ -67,9 +67,10 @@ def draw_id_mapping_overlay(frame, jersey_display_map):
     return frame
 
 
+
 def main():
-    in_path  = 'input_videos/video_cut_3.mp4'
-    out_path = 'output_videos/video_cut_3_after_ocr.avi'
+    in_path  = 'video/input_videos/match1_cut45s.mp4'
+    out_path = 'video/output_videos/match1_cut45s_1117v.avi'
 
     cap, fps, w, h = open_video(in_path)
     tracker = Tracker(
@@ -110,18 +111,19 @@ def main():
     team_fit_done = False
     cm_est = None
     frame_idx = 0
+
     cam_calib = CamCalib(MODEL_PATH, LINES_FILE)
     vt = ViewTransformer2D(
         cam_calib,
         scale=0.5,
         alpha=0.4,
         dot_radius=8,
-        ema_alpha=0.4,
-        max_step=10,
-        margin=4
+        ema_alpha=0.2,
+        max_step=15,
+        margin=6
     )
 
-    ball_action = None
+    ball_action = BallActionSpot()
 
     for frame in iter_frames(cap):
         # Track 1 frame
@@ -386,6 +388,12 @@ def main():
             team_assigner.assign_team_model(frame, cur_tracks['players'])
             team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
 
+        # Gán team & màu vào tracks 
+        for pid, info in cur_tracks['players'].items():
+            team = team_assigner.get_player_team(frame, info['bbox'], pid)
+            info['team'] = team
+            info['team_color'] = team_assigner.team_colors.get(team, (0, 0, 255))
+
         vt.update_homography_from_frame(frame)
         
         id2color, id2label, pid2team = {}, {}, {}
@@ -413,7 +421,19 @@ def main():
 
         drawn = cm_est.draw_overlay(drawn, dx, dy)
 
-        # refs 
+        # minimap
+        id2color, id2label, pid2team = {}, {}, {}
+
+        # players
+        TEAM_COLORS = team_assigner.team_colors
+        for pid, info in cur_tracks['players'].items():
+            team = info.get('team', None)
+            color_bgr = tuple(int(c) for c in TEAM_COLORS.get(team, (0, 0, 255)))
+            id2color[pid] = color_bgr
+            id2label[pid] = pid
+            pid2team[pid] = team
+
+        # refs
         REF_COLOR = (0, 255, 255)
         if 'refs' in cur_tracks and cur_tracks['refs']:
             for rid, info in cur_tracks['refs'].items():
@@ -445,13 +465,14 @@ def main():
 
         write_frame(writer, drawn)
         frame_idx += 1
-        
+
         if frame_idx >= fps * 300:
             break
 
     close_video(cap)
     close_writer(writer)
     print(f"[DONE] Wrote: {out_path}")
+
 
 if __name__ == '__main__':
     main()
