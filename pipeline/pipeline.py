@@ -2,14 +2,15 @@ from collections import defaultdict
 from pathlib import Path
 from time import perf_counter
 
-from FieldMarkings.run import CamCalib, LINES_FILE, MODEL_PATH
-from camera_movement_estimator import CameraMovementEstimator
-from export_ball_trail_video import export_ball_trail_video
-from team_assigner.team_assigner import TeamAssigner
-from trackers import Tracker
+from Homography.field_markings.run import CamCalib
+from DetectTrack.camera_movement_estimator import CameraMovementEstimator
+from DetectTrack.team_assigner.team_assigner import TeamAssigner
+from DetectTrack.trackers import Tracker
 from utils.video_utils import close_video, close_writer, create_writer, iter_frames, open_video, write_frame
-from view_transformer import ViewTransformer2D
+from Homography.view_transformer import ViewTransformer2D
+from BallAction import BallActionSpot
 
+from utils.export_ball_trail_video import export_ball_trail_video
 from pipeline.ball import select_ball_detection
 from pipeline.config import PipelineConfig
 from pipeline.jersey import JerseyCoordinator
@@ -36,7 +37,7 @@ def run_pipeline(config: PipelineConfig):
     team_fit_done = False
     cm_est = None
     frame_idx = 0
-    cam_calib = CamCalib(MODEL_PATH, LINES_FILE)
+    cam_calib = CamCalib(config.hrnet_path, config.line_path)
     tail_frames = int(max(25, min(50, round(fps * 2)))) if fps else 50
     vt = ViewTransformer2D(
         cam_calib,
@@ -51,7 +52,7 @@ def run_pipeline(config: PipelineConfig):
         ball_ttl=max(200, tail_frames),
     )
 
-    ball_action = None
+    ball_action = BallActionSpot()
     ball_trail_records = []
 
     for frame in iter_frames(cap):
