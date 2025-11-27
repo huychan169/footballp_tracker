@@ -7,7 +7,7 @@
 *.avi
 *.mov
 *.mkv
-
+.venv
 # Images (raw dataset)
 *.jpg
 *.jpeg

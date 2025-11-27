@@ -4,7 +4,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Deque, Dict, Optional, Set, Tuple
 
-from ocr.jersey_recognizer import JerseyRecogniser
+from JerseyNumber.ocr.jersey_recognizer import JerseyRecogniser
 
 from pipeline.config import PipelineConfig
 
@@ -21,25 +21,21 @@ class JerseyCoordinator:
         self.jersey_ocr = self._build_recogniser()
 
     def _build_recogniser(self) -> Optional[JerseyRecogniser]:
-        try:
-            tracker_device = getattr(self.tracker, "device", "cuda:0")
-            jersey_device = "cuda" if str(tracker_device).startswith("cuda") else "cpu"
-            return JerseyRecogniser(
-                parseq_root=Path("parseq"),
-                checkpoint_path=self.config.parseq_checkpoint,
-                pose_model_path=self.config.pose_model_path,
-                device=jersey_device,
-                history_window=30,
-                confidence_threshold=0.6,
-                vote_min_confidence=0.55,
-                vote_min_support=2,
-                vote_high_threshold=0.65,
-                vote_count_min=4,
-                vote_count_margin=2,
-            )
-        except Exception as exc:
-            print(f"[JerseyOCR] Không thể khởi tạo OCR: {exc}")
-            return None
+        tracker_device = getattr(self.tracker, "device", "cuda:0")
+        jersey_device = "cuda" if str(tracker_device).startswith("cuda") else "cpu"
+        return JerseyRecogniser(
+            parseq_root=Path("/home/ec2-user/workspace/footballp_tracker"),
+            checkpoint_path=self.config.parseq_checkpoint,
+            pose_model_path=self.config.pose_model_path,
+            device=jersey_device,
+            history_window=30,
+            confidence_threshold=0.6,
+            vote_min_confidence=0.55,
+            vote_min_support=2,
+            vote_high_threshold=0.65,
+            vote_count_min=4,
+            vote_count_margin=2,
+        )
 
     def process(self, frame, cur_tracks, frame_idx: int, timings, counts):
         if self.jersey_ocr is None:
