@@ -4,8 +4,8 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    input_path: Path = Path("data/inputs/video_cut_3.mp4")
-    output_path: Path = Path("data/outputs/video_cut_3_new.avi")
+    input_path: Path = Path("data/inputs/match1_cut45s.mp4")
+    output_path: Path = Path("data/outputs/match1_cut_45s_121_pnlcalib.avi")
     profile_output: Path = Path("data/outputs/pipeline_profile.txt")
     # Tracker config
     tracker_model_path: Path = Path("data/models/best_ylv8_ep50.pt")
@@ -23,6 +23,11 @@ class PipelineConfig:
     homography_update_every: int = 3
     line_path: Path = None # Path("data/models/line_extreme_heatpoints2/model-013-0.826654.pth")
     hrnet_path: Path = Path("data/models/HRNet_57_hrnet48x2_57_003/evalai-018-0.536880.pth")
+    # Homography pnlcalib config
+    pnl_kp_weight: Path = Path("third_party/PnLCalib/weights/SV_kp")
+    pnl_line_weight: Path = Path("third_party/PnLCalib/weights/SV_lines")
+    pnl_kp_threshold: float = 0.3434
+    pnl_line_threshold: float = 0.7867
 
     max_runtime_seconds: int = 300
     ball_trail_suffix: str = "_ball_trail.mp4"

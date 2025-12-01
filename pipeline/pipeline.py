@@ -1,8 +1,10 @@
+import torch
 from collections import defaultdict
 from pathlib import Path
 from time import perf_counter
 
-from Homography.field_markings.run import CamCalib
+# from Homography.field_markings.run import CamCalib
+from third_party.PnLCalib.wrapper import PnLCalibWrapper #add
 from DetectTrack.camera_movement_estimator import CameraMovementEstimator
 from DetectTrack.team_assigner.team_assigner import TeamAssigner
 from DetectTrack.trackers import Tracker
@@ -37,10 +39,22 @@ def run_pipeline(config: PipelineConfig):
     team_fit_done = False
     cm_est = None
     frame_idx = 0
-    cam_calib = CamCalib(config.hrnet_path, config.line_path)
+
+    pnl_calib = PnLCalibWrapper(
+        kp_weight=str(config.pnl_kp_weight),
+        line_weight=str(config.pnl_line_weight),
+        kp_threshold=config.pnl_kp_threshold,
+        line_threshold=config.pnl_line_threshold,
+        pnl_refine=True,
+        device="cuda",
+        img_width=w,
+        img_height=h,
+    )
+    
     tail_frames = int(max(25, min(50, round(fps * 2)))) if fps else 50
     vt = ViewTransformer2D(
-        cam_calib,
+        img_width=w,
+        img_height=h,
         scale=0.5,
         alpha=0.4,
         dot_radius=8,
@@ -72,9 +86,10 @@ def run_pipeline(config: PipelineConfig):
             counts["team_fit"] += 1
             team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
 
-        if frame_idx % config.homography_update_every == 0 or cam_calib.H is None:
+        if frame_idx % config.homography_update_every == 0 or not vt.has_valid_h:
             t0 = perf_counter()
-            vt.update_homography_from_frame(frame)
+            H = pnl_calib.compute_H(frame)
+            vt.update_homography(H)
             timings["homography"] += perf_counter() - t0
             counts["homography"] += 1
 
@@ -118,15 +133,17 @@ def run_pipeline(config: PipelineConfig):
         pid_feet_refs = vt.compute_feet(w, h, cur_tracks.get('refs', {}))
         pid_feet_all = {**pid_feet_players, **pid_feet_refs}
 
-        if getattr(cam_calib, "has_valid_h", False):
+        if getattr(vt, "has_valid_h", False): #add
             vt.update_history(pid_feet_all, frame_idx)
+
         timings["feet_projection"] += perf_counter() - t0
         counts["feet_projection"] += 1
 
         t0 = perf_counter()
         ball_xy = None
         ball_keep_last = False
-        ball_air = not getattr(cam_calib, "has_valid_h", False)
+        ball_air = not vt.has_valid_h
+
         if 'ball' in cur_tracks and cur_tracks['ball']:
             best_ball = select_ball_detection(cur_tracks['ball'], w, h)
             if best_ball:
