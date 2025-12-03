@@ -7,8 +7,8 @@ from kornia.geometry.transform import hflip
 
 import argus
 
-from BallAction.src.indexes import StackIndexesGenerator
-from BallAction.src.frames import get_frames_processor
+from OldBallAction.src.indexes import StackIndexesGenerator
+from OldBallAction.src.frames import get_frames_processor
 
 
 def batched(iterable: Iterable, size: int):

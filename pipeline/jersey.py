@@ -24,7 +24,7 @@ class JerseyCoordinator:
         tracker_device = getattr(self.tracker, "device", "cuda:0")
         jersey_device = "cuda" if str(tracker_device).startswith("cuda") else "cpu"
         return JerseyRecogniser(
-            parseq_root=Path("/home/ec2-user/workspace/footballp_tracker"),
+            parseq_root=Path.cwd(),
             checkpoint_path=self.config.parseq_checkpoint,
             pose_model_path=self.config.pose_model_path,
             device=jersey_device,

@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import torch
 
-from BallAction.src.frame_fetchers.abstract import AbstractFrameFetcher
+from OldBallAction.src.frame_fetchers.abstract import AbstractFrameFetcher
 
 HEIGHT, WIDTH = 448, 796
 

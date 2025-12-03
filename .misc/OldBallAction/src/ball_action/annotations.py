@@ -4,8 +4,8 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import maximum_filter
 
-from BallAction.src.utils import get_video_info, post_processing
-from BallAction.src.ball_action import constants
+from OldBallAction.src.utils import get_video_info, post_processing
+from OldBallAction.src.ball_action import constants
 
 
 def get_game_videos_data(game: str,

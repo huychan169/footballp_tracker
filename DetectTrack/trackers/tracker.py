@@ -105,7 +105,8 @@ class Tracker:
                     conf=0.3,    
                     iou=0.45,
                     device=self.device,
-                    half=self.half_precision
+                    half=self.half_precision,
+                    verbose=False,
                 )
             detections += detections_batch
         return detections

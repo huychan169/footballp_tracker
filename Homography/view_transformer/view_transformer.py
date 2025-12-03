@@ -59,18 +59,16 @@ class ViewTransformer2D:
             [0, 0, 1]
         ], dtype=np.float64)
         return draw_pitch_homography(black, top_view_h)
-
-    def compute_feet(
+    
+    def compute_feet_uncalibrated(
         self,
         frame_w: int,
         frame_h: int,
-        players: Dict[int, Dict]
+        players: Dict[int, Dict],
+        enable_homography: bool = True
     ) -> Dict[int, Tuple[float, float]]:
         
-        res = {}
-        if self.cam.H is None or not getattr(self.cam, "has_valid_h", False):
-            return res
-
+        player_feets = {}
         for pid, info in players.items():
             x1, y1, x2, y2 = info["bbox"]
             height = y2 - y1
@@ -78,10 +76,10 @@ class ViewTransformer2D:
             if height <= 1.0 or width <= 1.0:
                 continue
             aspect = width / max(height, 1e-6)
-            if aspect > 0.9 or aspect < 0.2:
-                continue  # skip implausible boxes
 
-            # Adaptive foot offset: smaller offset for small boxes, larger for tall ones
+            if aspect > 0.9 or aspect < 0.2:
+                continue
+
             fh_ratio = min(1.0, height / float(frame_h))
             adaptive_offset = self.feet_offset_ratio
             if fh_ratio < 0.12:
@@ -91,52 +89,95 @@ class ViewTransformer2D:
             if self.feet_offset_ratio > 1e-6 and height > 1.0:
                 foot_y = y2 - adaptive_offset * height
                 y2 = max(y1, foot_y)
-            x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
 
+            if enable_homography:
+                player_feets[pid] = (x1, y1, x2, y2)
+            else:
+                x_feet = 0.5 * (x1 + x2)
+                player_feets[pid] = (int(x_feet), int(y2))
+        
+        return player_feets
+
+    def compute_feet(
+        self,
+        frame_w: int,
+        frame_h: int,
+        players: Dict[int, Dict]
+    ) -> Dict[int, Tuple[float, float]]:
+        res = {}
+
+        if self.cam.H is None or not getattr(self.cam, "has_valid_h", False):
+            return res
+        
+        feet_uncalibrated = self.compute_feet_uncalibrated(frame_w, frame_h, players)
+
+        for pid, info in feet_uncalibrated.items():
+            x1, y1, x2, y2 = info["bbox"]
+            x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
             feet_xy = self.cam.calibrate_player_feet((x1_n, y1_n, x2_n, y2_n))
+            x, y = float(feet_xy[0]), float(feet_xy[1])
+
             if feet_xy is None:
                 continue
-
-            x, y = float(feet_xy[0]), float(feet_xy[1])
-            if np.isfinite(x) and np.isfinite(y):
+            elif np.isfinite(x) and np.isfinite(y):
                 x = float(np.clip(x, 0.0, self.cam.IMG_W - 1.0))
                 y = float(np.clip(y, 0.0, self.cam.IMG_H - 1.0))
                 res[pid] = (x, y)
+
         return res
+    
+    def compute_ball_uncalibrated(
+        self,
+        frame_w: int,
+        frame_h: int,
+        balls: Dict,
+        use_center: bool = False,
+        enable_homography: bool = True
+    ):
+        
+        bbox = balls.get("bbox", None)
+        
+        if bbox is None:
+            return None
+        
+        x1, y1, x2, y2 = bbox
+
+        if use_center:
+            cy = 0.5 * (y1 + y2)
+            y2 = cy
+
+        if enable_homography:
+            return (x1, y1, x2, y2)
+        else:
+            return (int(0.5 * (x1 + x2)), int(y2))
 
     def compute_ball(
         self,
         frame_w: int,
         frame_h: int,
-        balls: Dict[int, Dict],
+        balls: Dict,
         use_center: bool = False
     ) -> Optional[Tuple[float, float]]:
 
         if self.cam.H is None or not getattr(self.cam, "has_valid_h", False) or not balls:
             return None
+        
+        ball_uncalibrated = self.compute_ball_uncalibrated(frame_w, frame_h, balls, use_center=use_center)
 
-        for _, info in balls.items():
-            bbox = info.get("bbox", None)
-            if bbox is None:
-                continue
-            x1, y1, x2, y2 = bbox
-            if use_center:
-                cy = 0.5 * (y1 + y2)
-                y2 = cy
-            x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
-            feet_xy = self.cam.calibrate_player_feet((x1_n, y1_n, x2_n, y2_n))
-            if feet_xy is None:
-                continue
+        x1, y1, x2, y2 = ball_uncalibrated
+        x1_n, y1_n, x2_n, y2_n = x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h
+        feet_xy = self.cam.calibrate_player_feet((x1_n, y1_n, x2_n, y2_n))
+        if feet_xy is None:
+            return None
 
-            x, y = float(feet_xy[0]), float(feet_xy[1])
-            if not (np.isfinite(x) and np.isfinite(y)):
-                continue
+        x, y = float(feet_xy[0]), float(feet_xy[1])
+        if not (np.isfinite(x) and np.isfinite(y)):
+            return None
 
-            x = float(np.clip(x, 0.0, self.cam.IMG_W - 1.0))
-            y = float(np.clip(y, 0.0, self.cam.IMG_H - 1.0))
-            return (x, y)
-
-        return None
+        x = float(np.clip(x, 0.0, self.cam.IMG_W - 1.0))
+        y = float(np.clip(y, 0.0, self.cam.IMG_H - 1.0))
+        
+        return (x, y)
 
     def update_history(self, pid2xy: Dict[int, Tuple[float, float]], frame_idx: int) -> None:
         for pid, xy in pid2xy.items():

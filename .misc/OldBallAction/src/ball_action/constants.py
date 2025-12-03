@@ -1,4 +1,4 @@
-from BallAction.src.constants import data_dir, soccernet_dir, configs_dir
+from OldBallAction.src.constants import data_dir, soccernet_dir, configs_dir
 
 ball_action_dir = data_dir / "ball_action"
 configs_dir = configs_dir / "ball_action"

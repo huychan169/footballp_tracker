@@ -7,11 +7,11 @@ from tqdm import tqdm
 import numpy as np
 import cv2
 
-from BallAction.src.ball_action.annotations import get_game_videos_data
-from BallAction.src.utils import get_video_info, post_processing
+from OldBallAction.src.ball_action.annotations import get_game_videos_data
+from OldBallAction.src.utils import get_video_info, post_processing
 # from BallAction.src.frame_fetchers import NvDecFrameFetcher
-from BallAction.src.target import VideoTarget
-from BallAction.src.ball_action import constants
+from OldBallAction.src.target import VideoTarget
+from OldBallAction.src.ball_action import constants
 
 
 RESOLUTION = "720p"
