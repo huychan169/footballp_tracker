@@ -9,9 +9,9 @@ from argus.engine import State
 from argus.loss import pytorch_losses
 from argus.utils import deep_to, deep_detach, deep_chunk
 
-from BallAction.src.models.multidim_stacker import MultiDimStacker
-from BallAction.src.losses import FocalLoss
-from BallAction.src.mixup import TimmMixup
+from OldBallAction.src.models.multidim_stacker import MultiDimStacker
+from OldBallAction.src.losses import FocalLoss
+from OldBallAction.src.mixup import TimmMixup
 
 
 class BallActionModel(argus.Model):

@@ -106,7 +106,8 @@ class GMC:
         try:
             (cc, H) = cv2.findTransformECC(self.prevFrame, frame, H, self.warp_mode, self.criteria, None, 1)
         except:
-            print('Warning: find transform failed. Set warp as identity')
+            # print('Warning: find transform failed. Set warp as identity')
+            pass
 
         return H
 
@@ -272,8 +273,8 @@ class GMC:
             if self.downscale > 1.0:
                 H[0, 2] *= self.downscale
                 H[1, 2] *= self.downscale
-        else:
-            print('Warning: not enough matching points')
+        # else:
+        #     print('Warning: not enough matching points')
 
         # Store to next iteration
         self.prevFrame = frame.copy()
@@ -333,8 +334,8 @@ class GMC:
             if self.downscale > 1.0:
                 H[0, 2] *= self.downscale
                 H[1, 2] *= self.downscale
-        else:
-            print('Warning: not enough matching points')
+        # else:
+        #     print('Warning: not enough matching points')
 
         # Store to next iteration
         self.prevFrame = frame.copy()

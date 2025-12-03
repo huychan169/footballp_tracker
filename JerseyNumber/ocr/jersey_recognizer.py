@@ -165,12 +165,12 @@ class JerseyRecogniser:
         if reset:
             self._crop_debug_count = 0
         self._crop_debug_enabled = True
-        if self.crop_debug_limit:
-            print(
-                f"[JerseyOCR] Saving up to {self.crop_debug_limit} OCR crops to {self.crop_debug_dir}."
-            )
-        else:
-            print(f"[JerseyOCR] Saving OCR crops to {self.crop_debug_dir} (no limit).")
+        # if self.crop_debug_limit:
+        #     print(
+        #         f"[JerseyOCR] Saving up to {self.crop_debug_limit} OCR crops to {self.crop_debug_dir}."
+        #     )
+        # else:
+        #     print(f"[JerseyOCR] Saving OCR crops to {self.crop_debug_dir} (no limit).")
 
     def disable_crop_debug(self) -> None:
         self._crop_debug_enabled = False
@@ -197,9 +197,9 @@ class JerseyRecogniser:
         cv2.imwrite(str(filename), patch)
         self._crop_debug_count += 1
         if self.crop_debug_limit and self._crop_debug_count >= self.crop_debug_limit:
-            print(
-                f"[JerseyOCR] Crop debug limit reached ({self.crop_debug_limit}); disabling capture."
-            )
+            # print(
+            #     f"[JerseyOCR] Crop debug limit reached ({self.crop_debug_limit}); disabling capture."
+            # )
             self._crop_debug_enabled = False
 
     def extract_team_crop(
@@ -299,12 +299,12 @@ class JerseyRecogniser:
         x_right = min(x_right, x2)
 
         if x_right <= x_left or y_bottom <= y_top:
-            print(f"[JerseyOCR] Invalid crop for bbox={bbox}")
+            # print(f"[JerseyOCR] Invalid crop for bbox={bbox}")
             return None
 
         patch = frame[y_top:y_bottom, x_left:x_right]
         if patch.size == 0:
-            print(f"[JerseyOCR] Crop empty for bbox={bbox}")
+            # print(f"[JerseyOCR] Crop empty for bbox={bbox}")
             return None
         if patch.shape[0] < 12 or patch.shape[1] < 12:
             pad_y = max(int(height * 0.1), 4)
@@ -315,7 +315,7 @@ class JerseyRecogniser:
             x_b = min(x2 + pad_x, w)
             fallback = frame[y_a:y_b, x_a:x_b]
             if fallback.size == 0:
-                print(f"[JerseyOCR] Fallback crop empty for bbox={bbox}")
+                # print(f"[JerseyOCR] Fallback crop empty for bbox={bbox}")
                 return None
             return fallback
         return patch
@@ -346,7 +346,7 @@ class JerseyRecogniser:
                 verbose=False,
             )
         except Exception as exc:
-            print(f"[JerseyOCR] Lỗi YOLOv8 pose: {exc}")
+            # print(f"[JerseyOCR] Lỗi YOLOv8 pose: {exc}")
             return None
 
         if not results:
@@ -469,6 +469,7 @@ class JerseyRecogniser:
                     f"[JerseyOCR] Frame {frame_idx}: using pose crop "
                     f"(shape={patch.shape})."
                 )
+            pass
         else:
             if self.pose_model is not None and self.debug:
                 print(
@@ -501,35 +502,35 @@ class JerseyRecogniser:
             labels, confidences = self.model.tokenizer.decode(probs)
 
         if not labels:
-            print("[JerseyOCR] Model returned an empty sequence.")
+            # print("[JerseyOCR] Model returned an empty sequence.")
             return None
 
         text = labels[0]
         if text.strip() == "~":
-            print("[JerseyOCR] OCR produced placeholder '~'; treating as empty result.")
+            # print("[JerseyOCR] OCR produced placeholder '~'; treating as empty result.")
             return None
         confidence = _compute_confidence(confidences[0]) if confidences else 0.0
         if confidence < self.confidence_threshold:
-            print(
-                f"[JerseyOCR] Ignore '{text}' because confidence {confidence:.2f} "
-                f"< {self.confidence_threshold}."
-            )
+            # print(
+            #     f"[JerseyOCR] Ignore '{text}' because confidence {confidence:.2f} "
+            #     f"< {self.confidence_threshold}."
+            # )
             return None
 
         clean = "".join(ch for ch in text if ch.isdigit())
         if not clean:
-            print(f"[JerseyOCR] Parsed text '{text}' does not contain digits.")
+            # print(f"[JerseyOCR] Parsed text '{text}' does not contain digits.")
             return None
 
         if not clean.isdigit():
             return None
         value = int(clean)
         if value <= 0 or value > 99:
-            print(f"[JerseyOCR] Value '{value}' is outside the jersey range 1-99.")
+            # print(f"[JerseyOCR] Value '{value}' is outside the jersey range 1-99.")
             return None
 
         candidate = f"{value:02d}"
-        print(f"[JerseyOCR] OCR read '{candidate}' with confidence {confidence:.2f}.")
+        # print(f"[JerseyOCR] OCR read '{candidate}' with confidence {confidence:.2f}.")
         return OCRReading(text=candidate, confidence=confidence)
 
     def confirm_number(

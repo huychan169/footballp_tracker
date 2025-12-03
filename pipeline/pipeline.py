@@ -1,6 +1,7 @@
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 from time import perf_counter
+from tqdm import tqdm
 
 from Homography.field_markings.run import CamCalib
 from DetectTrack.camera_movement_estimator import CameraMovementEstimator
@@ -8,7 +9,7 @@ from DetectTrack.team_assigner.team_assigner import TeamAssigner
 from DetectTrack.trackers import Tracker
 from utils.video_utils import close_video, close_writer, create_writer, iter_frames, open_video, write_frame
 from Homography.view_transformer import ViewTransformer2D
-from BallAction import BallActionSpot
+from BallAction import BallActionModel
 
 from utils.export_ball_trail_video import export_ball_trail_video
 from pipeline.ball import select_ball_detection
@@ -18,7 +19,7 @@ from pipeline.overlays import draw_id_mapping_overlay, draw_jersey_labels
 
 
 def run_pipeline(config: PipelineConfig):
-    cap, fps, w, h = open_video(str(config.input_path))
+    cap, fps, w, h, total_frames = open_video(str(config.input_path))
     tracker = Tracker(
         str(config.tracker_model_path),
         use_boost=config.use_boost,
@@ -52,10 +53,11 @@ def run_pipeline(config: PipelineConfig):
         ball_ttl=max(200, tail_frames),
     )
 
-    ball_action = BallActionSpot()
+    ball_action = BallActionModel(config.ballaction_path, config.ballaction_conf, fps)
     ball_trail_records = []
+    prev_ball = deque(maxlen=int(fps//2))
 
-    for frame in iter_frames(cap):
+    for frame in tqdm(iter_frames(cap), total=total_frames):
         loop_start = perf_counter()
         t0 = perf_counter()
         tracks_one = tracker.get_object_tracks([frame], read_from_stub=False, stub_path=None)
@@ -72,13 +74,13 @@ def run_pipeline(config: PipelineConfig):
             counts["team_fit"] += 1
             team_fit_done = getattr(team_assigner, 'kmeans', None) is not None
 
-        if frame_idx % config.homography_update_every == 0 or cam_calib.H is None:
+        if config.enable_homography and (frame_idx % config.homography_update_every == 0 or cam_calib.H is None):
             t0 = perf_counter()
             vt.update_homography_from_frame(frame)
             timings["homography"] += perf_counter() - t0
             counts["homography"] += 1
 
-        id2color, id2label, pid2team = {}, {}, {}
+        id2color, id2label, pid2team, id2jersey = {}, {}, {}, {}
 
         t0 = perf_counter()
         for pid, info in cur_tracks['players'].items():
@@ -89,6 +91,7 @@ def run_pipeline(config: PipelineConfig):
             id2color[pid] = color_bgr
             jersey_text = info.get('jersey_number')
             id2label[pid] = jersey_text if jersey_text else pid
+            id2jersey[pid] = jersey_text if jersey_text else None
             pid2team[pid] = team
 
         drawn = tracker.draw_annotations_frame(frame, cur_tracks)
@@ -127,36 +130,65 @@ def run_pipeline(config: PipelineConfig):
         ball_xy = None
         ball_keep_last = False
         ball_air = not getattr(cam_calib, "has_valid_h", False)
+        ball_xy_uncalibrated = None
+
         if 'ball' in cur_tracks and cur_tracks['ball']:
             best_ball = select_ball_detection(cur_tracks['ball'], w, h)
             if best_ball:
                 area = best_ball.get("area")
+                ball_xy_uncalibrated = vt.compute_ball_uncalibrated(w, h,
+                                                                    best_ball,
+                                                                    use_center=True,
+                                                                    enable_homography=False)
                 if area is not None and area > 0.006 * w * h:
                     ball_air = True
                 if not ball_air:
-                    ball_xy = vt.compute_ball(w, h, {1: best_ball}, use_center=True)
+                    ball_xy = vt.compute_ball(w, h, best_ball, use_center=True)
                 else:
                     ball_keep_last = True
+
         if ball_air and ball_xy is None:
             ball_keep_last = True
+
         vt.update_ball(ball_xy, frame_idx, is_airball=ball_air, keep_last=ball_keep_last)
         ball_trail_records.append({
             "xy": ball_xy,
             "air": ball_air,
             "keep_last": ball_keep_last,
         })
+
         timings["ball"] += perf_counter() - t0
         counts["ball"] += 1
-
         t0 = perf_counter()
         field_img = vt.render_minimap(id2color=id2color, id2label=id2label)
         drawn = vt.blend_to_frame(drawn, field_img)
         drawn = draw_id_mapping_overlay(drawn, jersey_display_map)
         timings["minimap_render"] += perf_counter() - t0
         counts["minimap_render"] += 1
+        
+        pid_feet_players_uncalibrated = vt.compute_feet_uncalibrated(w, h, cur_tracks['players'], enable_homography=False)
+        possession_team = possession_player = None
 
-        if ball_action is not None:
-            drawn = ball_action.visualize_frame(drawn, frame_idx)
+        prev_ball.append(ball_xy_uncalibrated)
+        prev_ball_filtered = [b for b in prev_ball if b is not None]
+        ball_xy_choice = prev_ball_filtered[-1] if len(prev_ball_filtered) > 0 else None
+
+        if ball_xy_choice is not None:
+            min_dist = float('inf')
+
+            for feet_id, feet_xy in pid_feet_players_uncalibrated.items():
+                dist = ((feet_xy[0] - ball_xy_choice[0]) ** 2\
+                        + (feet_xy[1] - ball_xy_choice[1]) ** 2) ** 0.5
+
+                if dist < min_dist and dist < 60:  # meters
+                    min_dist = dist
+                    possession_player = id2jersey.get(feet_id, None)
+                    possession_team = pid2team.get(feet_id, None)
+
+                    if possession_team is not None:
+                        possession_team = "team1" if possession_team == 1 else "team2"
+
+        drawn = ball_action.visualize_frame(drawn, frame_idx, possession_team, possession_player)
 
         t0 = perf_counter()
         write_frame(writer, drawn)

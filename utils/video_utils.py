@@ -8,7 +8,8 @@ def open_video(path):
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    return cap, fps, w, h
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    return cap, fps, w, h, total_frames
 
 def iter_frames(cap):
     while True:
