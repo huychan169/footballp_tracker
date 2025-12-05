@@ -103,6 +103,7 @@ class JerseyRecogniser:
     vote_count_min: int = 3
     vote_count_margin: int = 1
     vote_low_threshold: float = 0.4
+    hard_age_cutoff: int = 0
     switch_margin: float = 0.15
     vote_weight_gamma: float = 2.0
     vote_time_decay_lambda: float = 0.1
@@ -634,6 +635,7 @@ class JerseyRecogniser:
         *,
         frame_idx: Optional[int] = None,
         reid_similarity: Optional[float] = None,
+        increment_miss: bool = True,
     ) -> Optional[StableOCRDecision]:
         history = self._history.setdefault(track_id, deque(maxlen=self.history_window))
         state = self._states.setdefault(track_id, _TrackConsensusState())
@@ -644,7 +646,8 @@ class JerseyRecogniser:
         current_frame = state.last_frame if state.last_frame >= 0 else 0
 
         if reading is None:
-            state.miss_count += 1
+            if increment_miss:
+                state.miss_count += 1
         else:
             sample_frame = frame_idx if frame_idx is not None else state.last_frame
             if sample_frame is None or sample_frame < 0:
@@ -672,11 +675,14 @@ class JerseyRecogniser:
                 print(f"[JerseyOCR] Track {track_id}: empty history.")
             return None
 
-        valid_samples = [
-            (sample, sample_frame)
-            for sample, sample_frame in history
-            if sample.confidence >= self.vote_min_confidence and sample.text and sample.text != "~"
-        ]
+        valid_samples: List[Tuple[OCRReading, int]] = []
+        for sample, sample_frame in history:
+            if sample.confidence < self.vote_min_confidence or not sample.text or sample.text == "~":
+                continue
+            age_frames = max(0, current_frame - sample_frame) if current_frame is not None else 0
+            if self.hard_age_cutoff and age_frames > self.hard_age_cutoff:
+                continue
+            valid_samples.append((sample, sample_frame))
         if not valid_samples:
             if state.confirmed_text and state.miss_count <= self.max_miss_streak:
                 return StableOCRDecision(

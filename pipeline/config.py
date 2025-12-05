@@ -24,6 +24,10 @@ class PipelineConfig:
     ocr_crop_dir: Path = Path("data/outputs/croped")
     ocr_crop_limit: int = 0  # 0 = save all crops when debug is enabled
     ocr_cache_refresh_stride: int = 25  # force re-OCR cached players every N frames to correct mistakes
+    ocr_low_conf_threshold: float = 0.6
+    ocr_low_consensus_threshold: float = 0.55
+    ocr_history_window: int = 16
+    ocr_hard_age_cutoff: int = 40
     jersey_cache_ttl_frames: int = 150
     jersey_cache_min_confidence: float = 0.58
 

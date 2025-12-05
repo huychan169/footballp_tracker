@@ -27,6 +27,8 @@ class JerseyCoordinator:
         self.track_jersey_cache: Dict[int, Dict[str, float]] = {}
         self.jersey_track_cache: Dict[str, Dict[str, int]] = {}
         self.jersey_ocr = self._build_recogniser()
+        self.last_ocr_frame: Dict[int, int] = {}
+        self.last_consensus: Dict[int, float] = {}
 
     def _build_recogniser(self) -> Optional[JerseyRecogniser]:
         tracker_device = getattr(self.tracker, "device", "cuda:0")
@@ -41,13 +43,14 @@ class JerseyCoordinator:
             enable_pose_crop=self.config.enable_pose_crop,
             crop_debug_dir=crop_dir,
             crop_debug_limit=crop_limit,
-            history_window=30,
+            history_window=self.config.ocr_history_window,
             confidence_threshold=0.6,
             vote_min_confidence=0.55,
-            vote_min_support=2,
-            vote_high_threshold=0.65,
-            vote_count_min=4,
+            vote_min_support=3,
+            vote_high_threshold=0.6,
+            vote_count_min=3,
             vote_count_margin=2,
+            hard_age_cutoff=self.config.ocr_hard_age_cutoff,
         )
 
     def process(self, frame, cur_tracks, frame_idx: int, timings, counts):
@@ -75,7 +78,7 @@ class JerseyCoordinator:
                 if bbox:
                     x1, y1, x2, y2 = map(int, bbox)
                     center = ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
-                attempt = self._should_attempt_ocr(source_tid, info, bbox, frame_idx)
+                attempt = self._should_attempt_ocr(display_id, source_tid, info, bbox, frame_idx)
                 if attempt and bbox:
                     attempt_entries.append({
                         "display_id": display_id,
@@ -95,9 +98,12 @@ class JerseyCoordinator:
                 decision = None
                 if attempt and bbox:
                     reading = batch_readings.get(display_id)
-                    decision = self.jersey_ocr.confirm_number(display_id, reading, frame_idx=frame_idx)
+                    if reading is not None:
+                        key = source_tid if source_tid is not None else display_id
+                        self.last_ocr_frame[key] = frame_idx
+                    decision = self.jersey_ocr.confirm_number(display_id, reading, frame_idx=frame_idx, increment_miss=reading is not None)
                 else:
-                    decision = self.jersey_ocr.confirm_number(display_id, None, frame_idx=frame_idx)
+                    decision = self.jersey_ocr.confirm_number(display_id, None, frame_idx=frame_idx, increment_miss=False)
                 info.pop('jersey_number', None)
                 info.pop('jersey_confidence', None)
 
@@ -160,10 +166,15 @@ class JerseyCoordinator:
                             "consensus": resolved.get("consensus", 0.0),
                             "votes": resolved.get("votes", 0),
                         }
+                        key = source_tid
+                        self.last_consensus[key] = resolved.get("consensus", 0.0)
                         self.jersey_track_cache[jersey] = {
                             "track_id": source_tid,
                             "frame": frame_idx,
                         }
+                    else:
+                        key = display_id
+                        self.last_consensus[key] = resolved.get("consensus", 0.0)
                 else:
                     pending_players.append((info, source_tid, display_id))
 
@@ -327,7 +338,7 @@ class JerseyCoordinator:
         counts["jersey_ocr"] += 1
         return cur_tracks
 
-    def _should_attempt_ocr(self, source_tid: Optional[int], info, bbox, frame_idx: int) -> bool:
+    def _should_attempt_ocr(self, display_id: int, source_tid: Optional[int], info, bbox, frame_idx: int) -> bool:
         if bbox is None:
             return False
         stride_hit = (self.config.ocr_frame_stride <= 1) or (frame_idx % self.config.ocr_frame_stride == 0)
@@ -339,14 +350,20 @@ class JerseyCoordinator:
         missing_jersey = ('jersey_number' not in info)
         debug_capture = self.config.ocr_enable_crop_debug
         refresh_due = (cached is not None) and (frame_idx % max(1, self.config.ocr_cache_refresh_stride) == 0)
-        low_conf_cache = cached is not None and cached.get("confidence", 0.0) < (self.config.jersey_cache_min_confidence + 0.05)
-        # Re-OCR if: scheduled refresh, cache looks weak, missing jersey, or normal stride; allow debug to force capture.
+        low_conf_cache = cached is not None and cached.get("confidence", 0.0) < self.config.ocr_low_conf_threshold
+        last_key = source_tid if source_tid is not None else display_id
+        last_ocr = self.last_ocr_frame.get(last_key, -1)
+        refresh_gap = (last_ocr < 0) or (frame_idx - last_ocr >= self.config.ocr_cache_refresh_stride)
+        consensus = self.last_consensus.get(last_key, 1.0)
+        low_vote = consensus < self.config.ocr_low_consensus_threshold
         return (
-            debug_capture
-            or missing_jersey
+            missing_jersey
+            or debug_capture
             or stride_hit
             or refresh_due
+            or refresh_gap
             or low_conf_cache
+            or low_vote
             or not stable_cached
         )
 
@@ -361,7 +378,7 @@ class JerseyCoordinator:
             patch = pose_crops.get(display_id)
             crop_source = "pose" if patch is not None else "bbox"
             if patch is None:
-                patch = self.jersey_ocr.crop_jersey_region(frame, bbox)
+                patch = self._enlarge_and_crop(frame, bbox, scale=1.12)
             if patch is None:
                 continue
             self.jersey_ocr._save_debug_patch(patch, frame_idx, crop_source, bbox)
@@ -402,6 +419,20 @@ class JerseyCoordinator:
         if value <= 0 or value > 99:
             return None
         return OCRReading(text=f"{value:02d}", confidence=confidence)
+
+    def _enlarge_and_crop(self, frame, bbox, scale=1.12):
+        x1, y1, x2, y2 = bbox
+        cx = 0.5 * (x1 + x2)
+        cy = 0.5 * (y1 + y2)
+        w = (x2 - x1) * scale
+        h = (y2 - y1) * scale
+        new_x1 = int(max(cx - 0.5 * w, 0))
+        new_y1 = int(max(cy - 0.5 * h, 0))
+        new_x2 = int(min(cx + 0.5 * w, frame.shape[1] - 1))
+        new_y2 = int(min(cy + 0.5 * h, frame.shape[0] - 1))
+        if new_x2 <= new_x1 or new_y2 <= new_y1:
+            return None
+        return frame[new_y1:new_y2, new_x1:new_x2]
 
     def reset(self):
         self.jersey_display_map.clear()
