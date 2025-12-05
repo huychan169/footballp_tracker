@@ -4,7 +4,15 @@ from pathlib import Path
 from time import perf_counter
 from typing import Deque, Dict, Optional, Set, Tuple
 
-from JerseyNumber.ocr.jersey_recognizer import JerseyRecogniser
+import cv2
+import torch
+from PIL import Image
+
+from JerseyNumber.ocr.jersey_recognizer import (
+    OCRReading,
+    JerseyRecogniser,
+    _compute_confidence,
+)
 
 from pipeline.config import PipelineConfig
 
@@ -23,11 +31,16 @@ class JerseyCoordinator:
     def _build_recogniser(self) -> Optional[JerseyRecogniser]:
         tracker_device = getattr(self.tracker, "device", "cuda:0")
         jersey_device = "cuda" if str(tracker_device).startswith("cuda") else "cpu"
+        crop_dir = self.config.ocr_crop_dir if self.config.ocr_enable_crop_debug else None
+        crop_limit = self.config.ocr_crop_limit if self.config.ocr_enable_crop_debug else 0
         return JerseyRecogniser(
             parseq_root=Path.cwd(),
             checkpoint_path=self.config.parseq_checkpoint,
             pose_model_path=self.config.pose_model_path,
             device=jersey_device,
+            enable_pose_crop=self.config.enable_pose_crop,
+            crop_debug_dir=crop_dir,
+            crop_debug_limit=crop_limit,
             history_window=30,
             confidence_threshold=0.6,
             vote_min_confidence=0.55,
@@ -48,24 +61,41 @@ class JerseyCoordinator:
             player_entries = list(cur_tracks['players'].items())
             jersey_candidates: Dict[str, list] = {}
             pending_players = []
+            attempt_entries = []
+            player_meta = []
+
+            if self.config.ocr_enable_crop_debug and self.jersey_ocr.crop_debug_dir is not None:
+                # Re-enable debug saving if it was disabled earlier.
+                self.jersey_ocr.enable_crop_debug(self.jersey_ocr.crop_debug_dir, limit=self.config.ocr_crop_limit, reset=False)
+
             for display_id, info in player_entries:
                 bbox = info.get('bbox')
                 source_tid = info.get('source_track_id')
-                decision = None
                 center = None
                 if bbox:
                     x1, y1, x2, y2 = map(int, bbox)
                     center = ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
-                    attempt = (
-                        (self.config.ocr_frame_stride <= 1)
-                        or (frame_idx % self.config.ocr_frame_stride == 0)
-                        or ('jersey_number' not in info)
-                    )
-                    if attempt:
-                        reading = self.jersey_ocr.read_number(frame, (x1, y1, x2, y2), frame_idx=frame_idx)
-                        decision = self.jersey_ocr.confirm_number(display_id, reading, frame_idx=frame_idx)
-                    else:
-                        decision = self.jersey_ocr.confirm_number(display_id, None, frame_idx=frame_idx)
+                attempt = self._should_attempt_ocr(source_tid, info, bbox, frame_idx)
+                if attempt and bbox:
+                    attempt_entries.append({
+                        "display_id": display_id,
+                        "bbox": tuple(map(int, bbox)),
+                        "info": info,
+                    })
+                player_meta.append((display_id, info, bbox, source_tid, center, attempt))
+
+            pose_crops = {}
+            if attempt_entries and self.config.enable_pose_crop:
+                pose_entries = [(entry["display_id"], entry["bbox"]) for entry in attempt_entries]
+                pose_crops = self.jersey_ocr._pose_crops_batch(frame, pose_entries)
+
+            batch_readings = self._batch_read_numbers(frame, attempt_entries, pose_crops, frame_idx) if attempt_entries else {}
+
+            for display_id, info, bbox, source_tid, center, attempt in player_meta:
+                decision = None
+                if attempt and bbox:
+                    reading = batch_readings.get(display_id)
+                    decision = self.jersey_ocr.confirm_number(display_id, reading, frame_idx=frame_idx)
                 else:
                     decision = self.jersey_ocr.confirm_number(display_id, None, frame_idx=frame_idx)
                 info.pop('jersey_number', None)
@@ -296,6 +326,82 @@ class JerseyCoordinator:
         timings["jersey_ocr"] += perf_counter() - t0
         counts["jersey_ocr"] += 1
         return cur_tracks
+
+    def _should_attempt_ocr(self, source_tid: Optional[int], info, bbox, frame_idx: int) -> bool:
+        if bbox is None:
+            return False
+        stride_hit = (self.config.ocr_frame_stride <= 1) or (frame_idx % self.config.ocr_frame_stride == 0)
+        cached = self.track_jersey_cache.get(source_tid) if source_tid is not None else None
+        cache_age = frame_idx - cached.get("frame", -1) if cached else 1e9
+        cache_recent = cached is not None and cache_age <= self.config.jersey_cache_ttl_frames
+        cache_conf_ok = cached is not None and cached.get("confidence", 0.0) >= self.config.jersey_cache_min_confidence
+        stable_cached = cache_recent and cache_conf_ok
+        missing_jersey = ('jersey_number' not in info)
+        debug_capture = self.config.ocr_enable_crop_debug
+        refresh_due = (cached is not None) and (frame_idx % max(1, self.config.ocr_cache_refresh_stride) == 0)
+        low_conf_cache = cached is not None and cached.get("confidence", 0.0) < (self.config.jersey_cache_min_confidence + 0.05)
+        # Re-OCR if: scheduled refresh, cache looks weak, missing jersey, or normal stride; allow debug to force capture.
+        return (
+            debug_capture
+            or missing_jersey
+            or stride_hit
+            or refresh_due
+            or low_conf_cache
+            or not stable_cached
+        )
+
+    def _batch_read_numbers(self, frame, attempt_entries, pose_crops, frame_idx: int) -> Dict[int, OCRReading]:
+        if not attempt_entries:
+            return {}
+        tensors = []
+        entry_refs = []
+        for entry in attempt_entries:
+            display_id = entry["display_id"]
+            bbox = entry["bbox"]
+            patch = pose_crops.get(display_id)
+            crop_source = "pose" if patch is not None else "bbox"
+            if patch is None:
+                patch = self.jersey_ocr.crop_jersey_region(frame, bbox)
+            if patch is None:
+                continue
+            self.jersey_ocr._save_debug_patch(patch, frame_idx, crop_source, bbox)
+            rgb_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(rgb_patch)
+            tensor = self.jersey_ocr.transform(image)
+            tensors.append(tensor)
+            entry_refs.append(display_id)
+
+        if not tensors:
+            return {}
+
+        batch = torch.stack(tensors).to(self.jersey_ocr.device)
+        with torch.inference_mode():
+            logits = self.jersey_ocr.model(batch)
+            probs = logits.softmax(-1)
+            labels, confidences = self.jersey_ocr.model.tokenizer.decode(probs)
+
+        readings: Dict[int, OCRReading] = {}
+        for idx, display_id in enumerate(entry_refs):
+            label = labels[idx] if idx < len(labels) else ""
+            conf_tensor = confidences[idx] if idx < len(confidences) else None
+            reading = self._parse_reading(label, conf_tensor)
+            if reading is not None:
+                readings[display_id] = reading
+        return readings
+
+    def _parse_reading(self, label: str, conf_tensor) -> Optional[OCRReading]:
+        if not label or label.strip() == "~":
+            return None
+        confidence = _compute_confidence(conf_tensor) if conf_tensor is not None else 0.0
+        if confidence < self.jersey_ocr.confidence_threshold:
+            return None
+        clean = "".join(ch for ch in label if ch.isdigit())
+        if not clean or not clean.isdigit():
+            return None
+        value = int(clean)
+        if value <= 0 or value > 99:
+            return None
+        return OCRReading(text=f"{value:02d}", confidence=confidence)
 
     def reset(self):
         self.jersey_display_map.clear()

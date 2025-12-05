@@ -5,7 +5,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class PipelineConfig:
     input_path: Path = Path("data/inputs/video_cut_3.mp4")
-    output_path: Path = Path("data/outputs/video_cut_3_new.avi")
+    output_path: Path = Path("data/outputs/video_cut_3.avi")
     profile_output: Path = Path("data/outputs/pipeline_profile.txt")
 
     # Tracker config
@@ -16,9 +16,14 @@ class PipelineConfig:
     reid_backend: str = "torchreid"
 
     # OCR and Jersey config
-    parseq_checkpoint: Path = Path("data/models/parseq/03_11_2025/checkpoints/test.ckpt")
-    pose_model_path: Path = Path("data/models/yolov8m-pose.pt")
-    ocr_frame_stride: int = 2
+    parseq_checkpoint: Path = Path("data/models/parseq/04_12_2025/checkpoints/test.ckpt")
+    pose_model_path: Path = Path("data/models/yolo11n-pose.pt")
+    enable_pose_crop: bool = True
+    ocr_frame_stride: int = 1
+    ocr_enable_crop_debug: bool = False
+    ocr_crop_dir: Path = Path("data/outputs/croped")
+    ocr_crop_limit: int = 0  # 0 = save all crops when debug is enabled
+    ocr_cache_refresh_stride: int = 25  # force re-OCR cached players every N frames to correct mistakes
     jersey_cache_ttl_frames: int = 150
     jersey_cache_min_confidence: float = 0.58
 

@@ -4,7 +4,7 @@ import sys
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple, List
 
 import math
 
@@ -89,6 +89,7 @@ class JerseyRecogniser:
     pose_model_path: Optional[Path] = None
     pose_conf_threshold: float = 0.5
     pose_imgsz: int = 256
+    enable_pose_crop: bool = True
     debug: bool = False
 
     crop_debug_dir: Optional[Path] = None
@@ -208,9 +209,11 @@ class JerseyRecogniser:
         bbox: Tuple[int, int, int, int],
     ) -> Optional[np.ndarray]:
         """Trả về patch áo (ưu tiên pose) phục vụ chia đội/kmeans."""
-        patch = self._crop_with_pose(frame, bbox)
-        if patch is not None:
-            return patch
+        patch = None
+        if self.enable_pose_crop:
+            patch = self._crop_with_pose(frame, bbox)
+            if patch is not None:
+                return patch
         return self.crop_jersey_region(frame, bbox)
 
     def _resolve_checkpoint(self, checkpoint: Optional[Path]) -> Path:
@@ -320,10 +323,13 @@ class JerseyRecogniser:
             return fallback
         return patch
 
-    def _crop_with_pose(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
-        if self.pose_model is None:
-            return None
-
+    def _crop_from_pose_points(
+        self,
+        frame: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+        xy: np.ndarray,
+        conf_arr: np.ndarray,
+    ) -> Optional[np.ndarray]:
         x1, y1, x2, y2 = bbox
         h, w = frame.shape[:2]
         x1 = max(int(x1), 0)
@@ -332,55 +338,6 @@ class JerseyRecogniser:
         y2 = min(int(y2), h)
         if x2 - x1 < 4 or y2 - y1 < 4:
             return None
-
-        person_crop = frame[y1:y2, x1:x2]
-        if person_crop.size == 0:
-            return None
-
-        try:
-            results = self.pose_model.predict(
-                person_crop,
-                conf=self.pose_conf_threshold,
-                imgsz=self.pose_imgsz,
-                device=self.device,
-                verbose=False,
-            )
-        except Exception as exc:
-            # print(f"[JerseyOCR] Lỗi YOLOv8 pose: {exc}")
-            return None
-
-        if not results:
-            return None
-
-        result = results[0]
-        keypoints = getattr(result, "keypoints", None)
-        if keypoints is None or keypoints.xy is None or len(keypoints.xy) == 0:
-            return None
-
-        if keypoints.xy.shape[0] > 1:
-            boxes = getattr(result, "boxes", None)
-            if boxes is not None and getattr(boxes, "conf", None) is not None and len(boxes.conf) > 0:
-                best_idx = int(boxes.conf.argmax().item())
-            else:
-                best_idx = 0
-        else:
-            best_idx = 0
-
-        xy = keypoints.xy[best_idx]
-        conf = keypoints.conf[best_idx] if keypoints.conf is not None else None
-
-        if isinstance(xy, torch.Tensor):
-            xy = xy.detach().cpu().numpy()
-        else:
-            xy = np.asarray(xy)
-
-        if conf is None:
-            conf_arr = np.ones(xy.shape[0], dtype=np.float32)
-        else:
-            if isinstance(conf, torch.Tensor):
-                conf_arr = conf.detach().cpu().numpy()
-            else:
-                conf_arr = np.asarray(conf)
 
         shoulder_indices = [5, 6]
         hip_indices = [11, 12]
@@ -420,11 +377,13 @@ class JerseyRecogniser:
             20.0,
         )
 
+        local_w = x2 - x1
+        local_h = y2 - y1
         left = int(max(center_x - half_width, 0))
-        right = int(min(center_x + half_width, person_crop.shape[1]))
+        right = int(min(center_x + half_width, local_w))
 
         top = int(max(torso_top - torso_height * 0.15, 0))
-        bottom = int(min(torso_bottom + torso_height * 0.4, person_crop.shape[0]))
+        bottom = int(min(torso_bottom + torso_height * 0.4, local_h))
 
         if right - left < 4 or bottom - top < 4:
             return None
@@ -448,12 +407,147 @@ class JerseyRecogniser:
 
         return frame[global_y1:global_y2, global_x1:global_x2]
 
+    def _crop_with_pose(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
+        if self.pose_model is None or not self.enable_pose_crop:
+            return None
+
+        x1, y1, x2, y2 = bbox
+        h, w = frame.shape[:2]
+        x1 = max(int(x1), 0)
+        y1 = max(int(y1), 0)
+        x2 = min(int(x2), w)
+        y2 = min(int(y2), h)
+        if x2 - x1 < 4 or y2 - y1 < 4:
+            return None
+
+        person_crop = frame[y1:y2, x1:x2]
+        if person_crop.size == 0:
+            return None
+
+        try:
+            results = self.pose_model.predict(
+                person_crop,
+                conf=self.pose_conf_threshold,
+                imgsz=self.pose_imgsz,
+                device=self.device,
+                verbose=False,
+            )
+        except Exception:
+            return None
+
+        if not results:
+            return None
+
+        result = results[0]
+        keypoints = getattr(result, "keypoints", None)
+        if keypoints is None or keypoints.xy is None or len(keypoints.xy) == 0:
+            return None
+
+        if keypoints.xy.shape[0] > 1:
+            boxes = getattr(result, "boxes", None)
+            if boxes is not None and getattr(boxes, "conf", None) is not None and len(boxes.conf) > 0:
+                best_idx = int(boxes.conf.argmax().item())
+            else:
+                best_idx = 0
+        else:
+            best_idx = 0
+
+        xy = keypoints.xy[best_idx]
+        conf = keypoints.conf[best_idx] if keypoints.conf is not None else None
+
+        if isinstance(xy, torch.Tensor):
+            xy = xy.detach().cpu().numpy()
+        else:
+            xy = np.asarray(xy)
+
+        if conf is None:
+            conf_arr = np.ones(xy.shape[0], dtype=np.float32)
+        else:
+            if isinstance(conf, torch.Tensor):
+                conf_arr = conf.detach().cpu().numpy()
+            else:
+                conf_arr = np.asarray(conf)
+
+        return self._crop_from_pose_points(frame, bbox, xy, conf_arr)
+
+    def _pose_crops_batch(
+        self,
+        frame: np.ndarray,
+        track_entries: List[Tuple[int, Tuple[int, int, int, int]]],
+    ) -> Dict[int, np.ndarray]:
+        if self.pose_model is None or not self.enable_pose_crop:
+            return {}
+        crops: List[np.ndarray] = []
+        track_ids: List[int] = []
+        bboxes: List[Tuple[int, int, int, int]] = []
+        h, w = frame.shape[:2]
+        for track_id, bbox in track_entries:
+            x1, y1, x2, y2 = bbox
+            x1 = max(int(x1), 0)
+            y1 = max(int(y1), 0)
+            x2 = min(int(x2), w)
+            y2 = min(int(y2), h)
+            if x2 - x1 < 4 or y2 - y1 < 4:
+                continue
+            person_crop = frame[y1:y2, x1:x2]
+            if person_crop.size == 0:
+                continue
+            crops.append(person_crop)
+            track_ids.append(track_id)
+            bboxes.append((x1, y1, x2, y2))
+
+        if not crops:
+            return {}
+
+        try:
+            results = self.pose_model.predict(
+                crops,
+                conf=self.pose_conf_threshold,
+                imgsz=self.pose_imgsz,
+                device=self.device,
+                verbose=False,
+            )
+        except Exception:
+            return {}
+
+        pose_crops: Dict[int, np.ndarray] = {}
+        for track_id, bbox, result in zip(track_ids, bboxes, results):
+            keypoints = getattr(result, "keypoints", None)
+            if keypoints is None or keypoints.xy is None or len(keypoints.xy) == 0:
+                continue
+            if keypoints.xy.shape[0] > 1:
+                boxes = getattr(result, "boxes", None)
+                if boxes is not None and getattr(boxes, "conf", None) is not None and len(boxes.conf) > 0:
+                    best_idx = int(boxes.conf.argmax().item())
+                else:
+                    best_idx = 0
+            else:
+                best_idx = 0
+            xy = keypoints.xy[best_idx]
+            conf = keypoints.conf[best_idx] if keypoints.conf is not None else None
+            if isinstance(xy, torch.Tensor):
+                xy_np = xy.detach().cpu().numpy()
+            else:
+                xy_np = np.asarray(xy)
+            if conf is None:
+                conf_arr = np.ones(xy_np.shape[0], dtype=np.float32)
+            else:
+                if isinstance(conf, torch.Tensor):
+                    conf_arr = conf.detach().cpu().numpy()
+                else:
+                    conf_arr = np.asarray(conf)
+            patch = self._crop_from_pose_points(frame, bbox, xy_np, conf_arr)
+            if patch is not None:
+                pose_crops[track_id] = patch
+        return pose_crops
+
     def read_number(
         self,
         frame: np.ndarray,
         bbox: Tuple[int, int, int, int],
         *,
         frame_idx: Optional[int] = None,
+        precomputed_patch: Optional[np.ndarray] = None,
     ) -> Optional[OCRReading]:
         if frame_idx is not None:
             self._frame_index = frame_idx
@@ -462,16 +556,16 @@ class JerseyRecogniser:
             frame_idx = self._frame_index
 
         crop_source = "pose"
-        patch = self._crop_with_pose(frame, bbox)
-        if patch is not None:
-            if self.debug:
+        patch = precomputed_patch
+        if patch is None and self.enable_pose_crop:
+            patch = self._crop_with_pose(frame, bbox)
+            if patch is not None and self.debug:
                 print(
                     f"[JerseyOCR] Frame {frame_idx}: using pose crop "
                     f"(shape={patch.shape})."
                 )
-            pass
-        else:
-            if self.pose_model is not None and self.debug:
+        if patch is None:
+            if self.pose_model is not None and self.debug and self.enable_pose_crop:
                 print(
                     f"[JerseyOCR] Frame {frame_idx}: pose crop unavailable "
                     "or low confidence; falling back to bbox crop."
