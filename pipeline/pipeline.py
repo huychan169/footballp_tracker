@@ -202,6 +202,10 @@ def run_pipeline(config: PipelineConfig):
             break
 
     _write_profile(config.profile_output, fps, frame_idx, timings, counts)
+    try:
+        jersey.export_csv(config.profile_output.parent)
+    except Exception as exc:
+        print(f"[CSV] Failed to export jersey CSVs: {exc}")
     _export_ball_trail(config, fps, ball_trail_records, vt)
 
     close_video(cap)

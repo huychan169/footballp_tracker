@@ -28,6 +28,8 @@ class PipelineConfig:
     ocr_low_consensus_threshold: float = 0.55
     ocr_history_window: int = 16
     ocr_hard_age_cutoff: int = 40
+    ocr_change_persist_frames: int = 3  # require N hits before switching number
+    ocr_overwrite_margin: float = 0.1   # allow immediate switch if conf improves by this margin
     jersey_cache_ttl_frames: int = 150
     jersey_cache_min_confidence: float = 0.58
 

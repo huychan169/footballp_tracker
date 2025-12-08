@@ -1,5 +1,6 @@
+import csv
 import math
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 from time import perf_counter
 from typing import Deque, Dict, Optional, Set, Tuple
@@ -29,6 +30,11 @@ class JerseyCoordinator:
         self.jersey_ocr = self._build_recogniser()
         self.last_ocr_frame: Dict[int, int] = {}
         self.last_consensus: Dict[int, float] = {}
+        self.track_to_number: Dict[int, Optional[str]] = {}
+        self.track_number_conf: Dict[int, float] = {}
+        self.number_history: Dict[int, list] = defaultdict(list)
+        self.occurrences_per_number: Dict[str, Set[int]] = defaultdict(set)
+        self.pending_number: Dict[int, Dict[str, float]] = {}
 
     def _build_recogniser(self) -> Optional[JerseyRecogniser]:
         tracker_device = getattr(self.tracker, "device", "cuda:0")
@@ -62,8 +68,6 @@ class JerseyCoordinator:
         t0 = perf_counter()
         if cur_tracks['players']:
             player_entries = list(cur_tracks['players'].items())
-            jersey_candidates: Dict[str, list] = {}
-            pending_players = []
             attempt_entries = []
             player_meta = []
 
@@ -95,238 +99,29 @@ class JerseyCoordinator:
             batch_readings = self._batch_read_numbers(frame, attempt_entries, pose_crops, frame_idx) if attempt_entries else {}
 
             for display_id, info, bbox, source_tid, center, attempt in player_meta:
-                decision = None
-                if attempt and bbox:
-                    reading = batch_readings.get(display_id)
-                    if reading is not None:
-                        key = source_tid if source_tid is not None else display_id
-                        self.last_ocr_frame[key] = frame_idx
-                    decision = self.jersey_ocr.confirm_number(display_id, reading, frame_idx=frame_idx, increment_miss=reading is not None)
-                else:
-                    decision = self.jersey_ocr.confirm_number(display_id, None, frame_idx=frame_idx, increment_miss=False)
+                reading = batch_readings.get(display_id) if (attempt and bbox) else None
+                if reading is not None:
+                    key = source_tid if source_tid is not None else display_id
+                    self.last_ocr_frame[key] = frame_idx
+                    self._update_number_with_hysteresis(key, reading, frame_idx)
+                jersey_assigned = self.track_to_number.get(source_tid if source_tid is not None else display_id)
                 info.pop('jersey_number', None)
                 info.pop('jersey_confidence', None)
-
-                resolved = None
-                if (
-                    decision
-                    and decision.is_confirmed
-                    and decision.text
-                    and (decision.mean_confidence or 0.0) >= self.config.jersey_cache_min_confidence
-                ):
-                    resolved = {
-                        "jersey": decision.text,
-                        "confidence": decision.mean_confidence,
-                        "consensus": decision.consensus,
-                        "votes": decision.votes,
-                        "source": "ocr",
-                    }
-                elif source_tid is not None:
-                    cached = self.track_jersey_cache.get(source_tid)
-                    if cached:
-                        age = frame_idx - cached.get("frame", -1)
-                        jersey = cached.get("jersey")
-                        owner = self.jersey_track_cache.get(jersey) if jersey else None
-                        owner_active = (
-                            owner
-                            and owner.get("track_id") is not None
-                            and owner["track_id"] != source_tid
-                            and frame_idx - owner.get("frame", -1) <= self.config.jersey_cache_ttl_frames
-                        )
-                        if (
-                            jersey
-                            and age <= self.config.jersey_cache_ttl_frames
-                            and not owner_active
-                        ):
-                            resolved = {
-                                "jersey": jersey,
-                                "confidence": cached.get("confidence", 0.5),
-                                "consensus": cached.get("consensus", 0.0),
-                                "votes": cached.get("votes", 0),
-                                "source": "cache",
-                            }
-
-                if resolved:
-                    jersey = resolved["jersey"]
-                    jersey_candidates.setdefault(jersey, []).append({
-                        "info": info,
-                        "confidence": resolved["confidence"],
-                        "consensus": resolved.get("consensus", 0.0),
-                        "votes": resolved.get("votes", 0),
-                        "center": center,
-                        "source_tid": source_tid,
-                        "original_id": display_id,
-                        "jersey": jersey,
-                    })
-                    if source_tid is not None:
-                        self.track_jersey_cache[source_tid] = {
-                            "jersey": jersey,
-                            "frame": frame_idx,
-                            "confidence": resolved["confidence"],
-                            "consensus": resolved.get("consensus", 0.0),
-                            "votes": resolved.get("votes", 0),
-                        }
-                        key = source_tid
-                        self.last_consensus[key] = resolved.get("consensus", 0.0)
-                        self.jersey_track_cache[jersey] = {
-                            "track_id": source_tid,
-                            "frame": frame_idx,
-                        }
-                    else:
-                        key = display_id
-                        self.last_consensus[key] = resolved.get("consensus", 0.0)
-                else:
-                    pending_players.append((info, source_tid, display_id))
-
-            selected_candidates = []
-            for jersey, candidates in jersey_candidates.items():
-                history = self.jersey_position_history.get(jersey)
-                expected_pos = None
-                loyalty_display = self.jersey_display_map.get(jersey)
-                if history:
-                    last_frame, last_cx, last_cy = history[-1]
-                    if frame_idx - last_frame <= 20:
-                        expected_pos = (last_cx, last_cy)
-                        if len(history) >= 2:
-                            prev_frame, prev_cx, prev_cy = history[-2]
-                            frame_delta = max(1, last_frame - prev_frame)
-                            vx = (last_cx - prev_cx) / frame_delta
-                            vy = (last_cy - prev_cy) / frame_delta
-                            delta_frames = max(0, frame_idx - last_frame)
-                            expected_pos = (last_cx + vx * delta_frames, last_cy + vy * delta_frames)
-
-                def candidate_key(candidate):
-                    center = candidate['center']
-                    loyalty_rank = 0 if loyalty_display == candidate['original_id'] else 1
-                    if center is None:
-                        distance = 1e9
-                    else:
-                        if expected_pos is not None:
-                            distance = math.hypot(center[0] - expected_pos[0], center[1] - expected_pos[1])
-                        elif history:
-                            _, last_cx, last_cy = history[-1]
-                            distance = math.hypot(center[0] - last_cx, center[1] - last_cy)
-                        else:
-                            distance = 1e9
-                    return (
-                        loyalty_rank,
-                        distance,
-                        -candidate['consensus'],
-                        -candidate['votes'],
-                        -candidate['confidence'],
+                if jersey_assigned:
+                    info['jersey_number'] = jersey_assigned
+                    info['jersey_confidence'] = (
+                        reading.confidence
+                        if reading and jersey_assigned == (reading.text if reading else None)
+                        else self.track_number_conf.get(source_tid if source_tid is not None else display_id)
                     )
+                    self.jersey_display_map[jersey_assigned] = display_id
 
-                best_candidate = min(candidates, key=candidate_key)
-                best_info = best_candidate['info']
-                best_info['jersey_number'] = best_candidate['jersey']
-                best_info['jersey_confidence'] = best_candidate['confidence']
-                selected_candidates.append(best_candidate)
-                for other in candidates:
-                    if other is best_candidate:
-                        continue
-                    pending_players.append((other['info'], other['source_tid'], other['original_id']))
-
-            jersey_confirmations = [
-                (cand['jersey'], cand['info'], cand['source_tid'], cand['original_id'])
-                for cand in selected_candidates
-            ]
-
-            assigned_players = {}
-            new_player_id_map = {}
-            used_ids = set()
-            if self.tracker.max_player_ids:
-                all_ids = list(range(1, self.tracker.max_player_ids + 1))
-            else:
-                all_ids = sorted({pid for pid, _ in player_entries})
-            reserved_ids = set(self.jersey_display_map.values())
-            display_to_jersey_local = {display_id: jersey for jersey, display_id in self.jersey_display_map.items()}
-
-            for jersey, info, source_tid, original_id in jersey_confirmations:
-                if jersey not in self.jersey_display_map:
-                    available_for_new = [i for i in all_ids if i not in reserved_ids and i not in used_ids]
-                    if not available_for_new:
-                        continue
-                    assigned_display = available_for_new[0]
-                    self.jersey_display_map[jersey] = assigned_display
-                    reserved_ids.add(assigned_display)
-                else:
-                    assigned_display = self.jersey_display_map[jersey]
-                if assigned_display in assigned_players:
-                    alternatives = [i for i in all_ids if i not in reserved_ids and i not in used_ids]
-                    if alternatives:
-                        assigned_display = alternatives[0]
-                        self.jersey_display_map[jersey] = assigned_display
-                        reserved_ids.add(assigned_display)
-                    else:
-                        continue
-                previous_jersey = display_to_jersey_local.get(assigned_display)
-                if previous_jersey and previous_jersey != jersey:
-                    self.jersey_display_map.pop(previous_jersey, None)
-                    display_to_jersey_local.pop(assigned_display, None)
-                display_to_jersey_local[assigned_display] = jersey
-                used_ids.add(assigned_display)
-                info['display_id'] = assigned_display
-                if source_tid is not None:
-                    new_player_id_map[source_tid] = assigned_display
-                assigned_players[assigned_display] = info
-
-            temp_pool = [i for i in all_ids if i not in reserved_ids and i not in used_ids]
-            temp_pool.sort(reverse=True)
-            for info, source_tid, original_id in pending_players:
-                if original_id is not None and original_id not in used_ids:
-                    assigned_display = original_id
-                elif temp_pool:
-                    assigned_display = temp_pool.pop(0)
-                else:
-                    remaining = [i for i in all_ids if i not in used_ids]
-                    if not remaining:
-                        continue
-                    assigned_display = remaining[0]
-                used_ids.add(assigned_display)
-                info['display_id'] = assigned_display
-                if source_tid is not None:
-                    new_player_id_map[source_tid] = assigned_display
-                assigned_players[assigned_display] = info
-
-            cur_tracks['players'] = dict(sorted(assigned_players.items()))
+            cur_tracks['players'] = dict(sorted(cur_tracks['players'].items()))
             active_ids = set(cur_tracks['players'].keys())
             stale_ids = self.active_jersey_ids - active_ids
             for stale_id in stale_ids:
                 self.jersey_ocr.reset_history(stale_id)
             self.active_jersey_ids = active_ids
-
-            self.tracker.sync_display_assignments(self.jersey_display_map, new_player_id_map)
-
-            active_source_tracks = {
-                info.get("source_track_id")
-                for info in cur_tracks['players'].values()
-                if info.get("source_track_id") is not None
-            }
-            for track_id in list(self.track_jersey_cache.keys()):
-                meta = self.track_jersey_cache.get(track_id) or {}
-                last_frame = meta.get("frame", -1)
-                if (
-                    track_id not in active_source_tracks
-                    and frame_idx - last_frame > self.config.jersey_cache_ttl_frames
-                ):
-                    self.track_jersey_cache.pop(track_id, None)
-            for jersey_key in list(self.jersey_track_cache.keys()):
-                jersey_meta = self.jersey_track_cache.get(jersey_key) or {}
-                if frame_idx - jersey_meta.get("frame", -1) > self.config.jersey_cache_ttl_frames:
-                    self.jersey_track_cache.pop(jersey_key, None)
-
-            for display_id, info in cur_tracks['players'].items():
-                jersey = info.get('jersey_number')
-                bbox = info.get('bbox')
-                if jersey and bbox:
-                    x1, y1, x2, y2 = map(float, bbox)
-                    center_x = 0.5 * (x1 + x2)
-                    center_y = 0.5 * (y1 + y2)
-                    history = self.jersey_position_history.get(jersey)
-                    if history is None:
-                        history = deque(maxlen=20)
-                        self.jersey_position_history[jersey] = history
-                    history.append((frame_idx, center_x, center_y))
         else:
             if self.active_jersey_ids:
                 for stale_id in self.active_jersey_ids:
@@ -342,15 +137,8 @@ class JerseyCoordinator:
         if bbox is None:
             return False
         stride_hit = (self.config.ocr_frame_stride <= 1) or (frame_idx % self.config.ocr_frame_stride == 0)
-        cached = self.track_jersey_cache.get(source_tid) if source_tid is not None else None
-        cache_age = frame_idx - cached.get("frame", -1) if cached else 1e9
-        cache_recent = cached is not None and cache_age <= self.config.jersey_cache_ttl_frames
-        cache_conf_ok = cached is not None and cached.get("confidence", 0.0) >= self.config.jersey_cache_min_confidence
-        stable_cached = cache_recent and cache_conf_ok
         missing_jersey = ('jersey_number' not in info)
         debug_capture = self.config.ocr_enable_crop_debug
-        refresh_due = (cached is not None) and (frame_idx % max(1, self.config.ocr_cache_refresh_stride) == 0)
-        low_conf_cache = cached is not None and cached.get("confidence", 0.0) < self.config.ocr_low_conf_threshold
         last_key = source_tid if source_tid is not None else display_id
         last_ocr = self.last_ocr_frame.get(last_key, -1)
         refresh_gap = (last_ocr < 0) or (frame_idx - last_ocr >= self.config.ocr_cache_refresh_stride)
@@ -360,11 +148,8 @@ class JerseyCoordinator:
             missing_jersey
             or debug_capture
             or stride_hit
-            or refresh_due
             or refresh_gap
-            or low_conf_cache
             or low_vote
-            or not stable_cached
         )
 
     def _batch_read_numbers(self, frame, attempt_entries, pose_crops, frame_idx: int) -> Dict[int, OCRReading]:
@@ -434,13 +219,81 @@ class JerseyCoordinator:
             return None
         return frame[new_y1:new_y2, new_x1:new_x2]
 
+    def _update_number_with_hysteresis(self, key: int, reading: OCRReading, frame_idx: int):
+        current = self.track_to_number.get(key)
+        current_conf = self.track_number_conf.get(key, 0.0)
+        if current is None:
+            self.track_to_number[key] = reading.text
+            self.track_number_conf[key] = reading.confidence
+            self.number_history[key].append((frame_idx, reading.text))
+            self.occurrences_per_number[reading.text].add(key)
+            self.last_consensus[key] = reading.confidence
+            self.pending_number.pop(key, None)
+            return
+
+        if reading.text == current:
+            # Reinforce confidence and clear pending.
+            self.track_number_conf[key] = max(current_conf, reading.confidence)
+            self.last_consensus[key] = reading.confidence
+            self.pending_number.pop(key, None)
+            return
+
+        pending = self.pending_number.get(key)
+        if pending and pending.get("candidate") == reading.text:
+            pending["count"] = pending.get("count", 1) + 1
+            pending["best_conf"] = max(pending.get("best_conf", 0.0), reading.confidence)
+        else:
+            pending = {"candidate": reading.text, "count": 1, "best_conf": reading.confidence}
+        self.pending_number[key] = pending
+
+        if (
+            pending["count"] >= self.config.ocr_change_persist_frames
+            or reading.confidence >= current_conf + self.config.ocr_overwrite_margin
+        ):
+            self.track_to_number[key] = pending["candidate"]
+            self.track_number_conf[key] = pending["best_conf"]
+            self.number_history[key].append((frame_idx, pending["candidate"]))
+            self.occurrences_per_number[pending["candidate"]].add(key)
+            self.last_consensus[key] = pending["best_conf"]
+            self.pending_number.pop(key, None)
+
     def reset(self):
         self.jersey_display_map.clear()
         self.active_jersey_ids.clear()
         self.jersey_position_history.clear()
         self.track_jersey_cache.clear()
         self.jersey_track_cache.clear()
+        self.track_to_number.clear()
+        self.track_number_conf.clear()
+        self.number_history.clear()
+        self.occurrences_per_number.clear()
+        self.last_ocr_frame.clear()
+        self.last_consensus.clear()
+        self.pending_number.clear()
 
     @property
     def display_map(self) -> Dict[str, int]:
         return self.jersey_display_map
+
+    def export_csv(self, output_dir: Path):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        track_csv = output_dir / "track_number.csv"
+        numbers_csv = output_dir / "numbers_to_tracks.csv"
+        with track_csv.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["track_id", "jersey", "first_frame", "last_frame"])
+            for track_id, hist in self.number_history.items():
+                if not hist:
+                    jersey = None
+                    first_frame = None
+                    last_frame = None
+                else:
+                    jersey = hist[-1][1]
+                    first_frame = hist[0][0]
+                    last_frame = hist[-1][0]
+                writer.writerow([track_id, jersey, first_frame, last_frame])
+        with numbers_csv.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["jersey", "track_ids"])
+            for jersey, ids in self.occurrences_per_number.items():
+                writer.writerow([jersey, " ".join(map(str, sorted(ids)))])

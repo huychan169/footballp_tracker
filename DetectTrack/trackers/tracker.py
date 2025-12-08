@@ -55,12 +55,15 @@ class Tracker:
             pass
         self.use_boost = use_boost
         self.use_reid = use_reid
+        # Allow unbounded display IDs; never reuse once assigned.
         if self.use_boost:
-            self.max_player_ids = 22
-            self.free_player_ids = list(range(1, self.max_player_ids + 1))
+            self.max_player_ids = None
+            self.free_player_ids = []
+            self.next_display_id = 1
         else:
             self.max_player_ids = None
             self.free_player_ids = []
+            self.next_display_id = 1
         self.player_id_map = {}
         self.display_to_track = {}
         self.jersey_to_display = {}
@@ -197,26 +200,13 @@ class Tracker:
                         "score": float(score),
                     }
 
-            if self.use_boost and self.max_player_ids is not None:
+            if self.use_boost:
                 players_frame = tracks["players"][frame_num]
-                current_track_ids = set(players_frame.keys())
-
-                for tid in list(self.player_id_map.keys()):
-                    if tid not in current_track_ids:
-                        old_display = self.player_id_map.pop(tid)
-                        self.display_to_track.pop(old_display, None)
-                        self.track_to_jersey.pop(tid, None)
-                        if old_display not in self.display_to_jersey:
-                            self.free_player_ids.append(old_display)
-                if self.free_player_ids:
-                    self.free_player_ids = sorted(set(self.free_player_ids))
-
                 remapped_players = {}
                 for tid in sorted(players_frame.keys()):
                     if tid not in self.player_id_map:
-                        if not self.free_player_ids:
-                            continue
-                        assigned = self.free_player_ids.pop(0)
+                        assigned = self.next_display_id
+                        self.next_display_id += 1
                         self.player_id_map[tid] = assigned
                     assigned_id = self.player_id_map[tid]
                     self.display_to_track[assigned_id] = tid
